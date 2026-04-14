@@ -73,6 +73,3 @@ subject to: Σw_i = 1, w_i ≥ 0
 
 SPY, QQQ, TLT, GLD, EFA, VNQ — covering US equities, tech, bonds, gold, international, and real estate.
 
-## Author
-
-Krish Tanwar — UBC Electrical Engineering, 2025
