@@ -1,0 +1,5 @@
+Strategy,Ann. Return,Ann. Volatility,Sharpe Ratio,Max Drawdown,Avg Turnover,Total Return
+Equal Weight,14.35%,12.79%,1.122,-11.11%,0.0000,17.93%
+Rolling MV,27.48%,25.24%,1.089,-20.64%,0.7083,34.81%
+Static MV,6.42%,21.89%,0.293,-23.38%,0.0000,7.95%
+Kalman MV,30.14%,17.84%,1.690,-14.48%,1.4583,38.28%
