@@ -4,14 +4,13 @@ optimizer.py — Mean-variance portfolio optimization with constraints.
 Solves:  max  w'mu - (lambda/2) * w'Sigma*w
          s.t. sum(w) = 1
               w >= 0  (long only)
+              w <= MAX_WEIGHT  (position cap)
 
-Usage:
-    from optimizer import optimize_portfolio
 """
 
 import numpy as np
 import cvxpy as cp
-from config import RISK_AVERSION, LONG_ONLY, FULLY_INVESTED
+from config import RISK_AVERSION, LONG_ONLY, FULLY_INVESTED, MAX_WEIGHT
 
 
 def optimize_portfolio(
@@ -19,6 +18,7 @@ def optimize_portfolio(
     sigma: np.ndarray,
     risk_aversion: float = RISK_AVERSION,
     long_only: bool = LONG_ONLY,
+    max_weight: float = MAX_WEIGHT,
 ) -> np.ndarray:
     """
     Solve the mean-variance optimization problem.
@@ -29,6 +29,7 @@ def optimize_portfolio(
     sigma : covariance matrix (n_assets x n_assets)
     risk_aversion : lambda parameter (higher = more conservative)
     long_only : if True, enforce w >= 0
+    max_weight : maximum weight per asset (position cap)
 
     Returns
     -------
@@ -47,6 +48,7 @@ def optimize_portfolio(
     constraints = [cp.sum(w) == 1]
     if long_only:
         constraints.append(w >= 0)
+    constraints.append(w <= max_weight)  # position cap
 
     # Solve
     problem = cp.Problem(objective, constraints)
@@ -55,7 +57,6 @@ def optimize_portfolio(
 
         if w.value is not None and problem.status == "optimal":
             weights = w.value
-            # Clean tiny negative values from numerical noise
             weights = np.maximum(weights, 0)
             weights = weights / weights.sum()
             return weights
@@ -64,17 +65,3 @@ def optimize_portfolio(
 
     # Fallback: equal weight
     return np.ones(n) / n
-
-
-# ─── Quick test ───────────────────────────────────────────────────
-if __name__ == "__main__":
-    # Simple test with made-up values
-    n = 6
-    np.random.seed(42)
-    mu = np.random.randn(n) * 0.001  # small daily returns
-    sigma = np.eye(n) * 0.0004       # ~20% annual vol per asset
-
-    weights = optimize_portfolio(mu, sigma)
-    print("Test weights:", weights.round(4))
-    print("Sum:", weights.sum().round(4))
-    print("Min:", weights.min().round(4))

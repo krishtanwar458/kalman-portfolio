@@ -37,7 +37,7 @@ def plot_cumulative_returns(results: list[dict], title: str = "Cumulative Return
         ax.plot(r["cumulative"], label=r["name"], linewidth=1.5)
 
     # Shade regime periods
-    colors = ["#FAEEDA", "#FCEBEB", "#E1F5EE", "#EEEDFE", "#E6F1FB"]
+    colors = ["#FAEEDA","#FCEBEB","#E1F5EE","#EEEDFE","#E6F1FB"]
     for i, (regime_name, (start, end)) in enumerate(REGIMES.items()):
         ax.axvspan(pd.Timestamp(start), pd.Timestamp(end),
                    alpha=0.15, color=colors[i % len(colors)], label=regime_name)
@@ -95,21 +95,33 @@ def plot_filtered_vs_rolling_mu(
     returns: pd.DataFrame,
     asset: str = "SPY",
     window: int = 60,
+    smooth: int = 21,
 ):
     """
     Compare Kalman-filtered expected return vs rolling mean for one asset.
-    This is a key figure for the paper — shows the filter in action.
+    Shows:
+      - Rolling 60-day mean (blue) — the naive benchmark
+      - Raw Kalman daily estimate (light orange, transparent) — shows reactivity
+      - Smoothed Kalman trend (dark orange) — shows regime adaptation
     """
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(14, 5))
 
-    # Annualize for readability
     rolling_mu = returns[asset].rolling(window).mean() * 252
-    kf_mu = filtered_mu[asset] * 252
+    kf_mu      = filtered_mu[asset] * 252
+    kf_smooth  = kf_mu.rolling(smooth).mean()
 
-    ax.plot(rolling_mu, label=f"Rolling {window}-day mean", linewidth=1, alpha=0.7)
-    ax.plot(kf_mu, label="Kalman-filtered estimate", linewidth=1.5)
+    # Raw Kalman in background — shows it's responsive but noisy
+    ax.plot(kf_mu, color="orange", linewidth=0.6, alpha=0.25, label="_nolegend_")
+
+    # Smoothed Kalman — the key line
+    ax.plot(kf_smooth, color="orange", linewidth=1.8,
+            label=f"Kalman estimate ({smooth}-day smoothed)")
+
+    # Rolling mean — the benchmark
+    ax.plot(rolling_mu, color="steelblue", linewidth=1.5, alpha=0.85,
+            label=f"Rolling {window}-day mean")
+
     ax.axhline(0, color="gray", linewidth=0.5, linestyle="--")
-
     ax.set_title(f"Expected Return Estimate — {asset}")
     ax.set_ylabel("Annualized Expected Return")
     ax.legend(fontsize=9)

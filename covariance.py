@@ -1,7 +1,7 @@
 """
 covariance.py — Rolling covariance estimation for portfolio optimization.
 
-For v1, we use simple rolling sample covariance.
+For v1, I use simple rolling sample covariance.
 Future versions could add shrinkage (Ledoit-Wolf) or filtered covariance.
 
 Usage:

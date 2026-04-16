@@ -1,19 +1,3 @@
-"""
-main.py — Run the full Kalman Filter portfolio optimization pipeline.
-
-This is the script you run to produce all results and figures.
-    python main.py
-
-It will:
-    1. Download ETF data
-    2. Split into train/test
-    3. Build Kalman Filter from training data
-    4. Run backtests for all strategies
-    5. Compute performance metrics
-    6. Generate all paper figures
-    7. Print comparison tables
-"""
-
 import os
 import warnings
 import numpy as np
@@ -44,13 +28,13 @@ def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(PLOTS_DIR, exist_ok=True)
 
-    # ─── Step 1: Load Data ────────────────────────────────────────
+    # Step 1: Load Data
     print("\n=== STEP 1: Loading Data ===")
     prices = load_prices()
     returns = compute_returns(prices)
     train, test = split_data(returns)
 
-    # ─── Step 2: Build Kalman Filter ──────────────────────────────
+    # Step 2: Build Kalman Filter
     print("\n=== STEP 2: Building Kalman Filter ===")
     kf = build_filter_from_training(train, q_scale=Q_SCALE)
     print(f"  Filter initialized with Q_scale={Q_SCALE}")
@@ -60,7 +44,7 @@ def main():
     kf_for_plot = build_filter_from_training(train, q_scale=Q_SCALE)
     filtered_mu = kf_for_plot.filter_returns(returns)
 
-    # ─── Step 3: Run Backtests ────────────────────────────────────
+    # Step 3: Run Backtests
     print("\n=== STEP 3: Running Backtests ===")
 
     # Define strategies
@@ -94,7 +78,7 @@ def main():
         result = run_backtest(test, strat_func, name=name)
         results_test.append(result)
 
-    # ─── Step 4: Evaluate ─────────────────────────────────────────
+    # Step 4: Evaluate
     print("\n=== STEP 4: Performance Metrics ===")
 
     print("\n--- Full Period ---")
@@ -116,7 +100,7 @@ def main():
     regime_df.to_csv(f"{RESULTS_DIR}/regime_analysis.csv")
     print(f"\n  Tables saved to {RESULTS_DIR}/")
 
-    # ─── Step 5: Generate Plots ───────────────────────────────────
+    # Step 5: Generate Plots
     print("\n=== STEP 5: Generating Plots ===")
 
     plot_cumulative_returns(results_full, "Cumulative Returns — Full Period")
@@ -134,6 +118,94 @@ def main():
     print("\n=== DONE ===")
     print(f"Results in ./{RESULTS_DIR}/")
     print(f"Plots in ./{PLOTS_DIR}/")
+
+    # Step 6: Statistical Significance Tests
+    print("\n=== STEP 6: Statistical Significance Tests ===")
+
+    from statistical_tests import run_all_tests
+
+    stat_results = run_all_tests(
+        results=results_full,         # backtest results list
+        filtered_mu=filtered_mu,      # Kalman-filtered expected returns (T x N DataFrame)
+        returns=returns,              # actual daily returns (T x N DataFrame)
+        rolling_window=60,            # must match ROLLING_WINDOW in config.py
+        n_bootstrap=1000,             # 1000 is standard; use 500 if slow
+    )
+
+    # Save Sharpe CI table to CSV
+    stat_results["sharpe_cis"].to_csv(f"{RESULTS_DIR}/sharpe_confidence_intervals.csv")
+    print(f"\n  Sharpe CI table saved to {RESULTS_DIR}/sharpe_confidence_intervals.csv")
+
+    # DM results
+    dm_df = pd.DataFrame(stat_results["dm_results"]).T
+    dm_df.to_csv(f"{RESULTS_DIR}/diebold_mariano_results.csv")
+    print(f"  DM test results saved to {RESULTS_DIR}/diebold_mariano_results.csv")
+
+
+    # Step 7: Regime Analysis
+    print("\n=== STEP 7: Regime-Conditional Performance Analysis ===")
+
+    from regime_detector import (
+        compute_realized_volatility,
+        classify_regimes,
+        regime_summary,
+        regime_sharpe_table,
+        kalman_outperformance_by_regime,
+    )
+    from plots_extended import (
+        plot_sharpe_confidence_intervals,
+        plot_regime_performance,
+        plot_kalman_advantage_by_regime,
+        plot_realized_volatility_with_regimes,
+        plot_forecast_error_comparison,
+    )
+
+    # Classify regimes using full return series
+    regimes = classify_regimes(returns, window=21, crisis_threshold=2.0)
+
+    print("\n  Regime day counts:")
+    print(regime_summary(regimes).to_string())
+
+    # Sharpe by regime
+    sharpe_by_regime = regime_sharpe_table(results_full, regimes)
+    print("\n  Sharpe by Regime:")
+    print(sharpe_by_regime.to_string())
+    sharpe_by_regime.to_csv(f"{RESULTS_DIR}/regime_sharpe_table.csv")
+
+    # Kalman advantage by regime (the key table)
+    advantage = kalman_outperformance_by_regime(results_full, regimes, baseline="Rolling MV")
+    print("\n  Kalman MV Advantage by Regime:")
+    print(advantage.to_string())
+    advantage.to_csv(f"{RESULTS_DIR}/kalman_advantage_by_regime.csv")
+
+
+    # Step 8: Extended Plots
+    print("\n=== STEP 8: Extended Plots ===")
+
+    # Sharpe CI forest plot
+    plot_sharpe_confidence_intervals(stat_results["sharpe_cis"])
+
+    # Regime Sharpe grouped bar
+    plot_regime_performance(sharpe_by_regime)
+
+    # Kalman advantage bar chart (the money chart)
+    plot_kalman_advantage_by_regime(advantage)
+
+    # Realized vol timeline with regime shading
+    vol_series = compute_realized_volatility(returns, window=21)
+    plot_realized_volatility_with_regimes(vol_series, regimes)
+
+    # Forecast error comparison (DM companion figure)
+    for asset in ["SPY", "TLT"]:  # show for 2 representative assets
+        plot_forecast_error_comparison(
+            stat_results["forecast_errors"]["kalman"],
+            stat_results["forecast_errors"]["rolling"],
+            asset=asset,
+        )
+
+    print("\n=== ALL DONE ===")
+    print(f"Results: ./{RESULTS_DIR}/")
+    print(f"Plots:   ./{PLOTS_DIR}/")
 
 
 if __name__ == "__main__":

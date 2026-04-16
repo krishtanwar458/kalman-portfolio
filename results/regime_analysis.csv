@@ -1,6 +1,6 @@
 Regime,Equal Weight,Rolling MV,Static MV,Kalman MV
-Pre-COVID,8.423,5.739,5.739,2.215
-COVID Crash,-0.173,-1.136,0.253,2.346
-Recovery,1.721,1.809,1.562,1.854
-Rate Hikes,-0.191,-0.221,0.083,-0.251
-Recent,1.105,0.772,0.704,1.263
+Pre-COVID,8.423,4.427,6.209,6.604
+COVID Crash,-0.173,0.136,0.03,1.504
+Recovery,1.721,1.709,1.74,2.014
+Rate Hikes,-0.191,-0.253,0.139,-0.341
+Recent,1.105,1.122,1.172,1.113

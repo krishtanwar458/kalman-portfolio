@@ -1,0 +1,5 @@
+Regime,N Days,Rolling MV Sharpe,Kalman MV Sharpe,Kalman Advantage
+LOW_VOL,1341,1.801,1.368,-0.433
+MED_VOL,1381,0.669,0.945,0.276
+HIGH_VOL,1213,0.471,0.276,-0.195
+CRISIS,128,0.813,0.828,0.015

@@ -26,10 +26,9 @@ class KalmanReturnFilter:
     """
     Multivariate Kalman Filter for estimating time-varying expected returns.
 
-    This is the core of the paper. The filter recursively updates its
-    estimate of the latent expected return vector as new observations
-    arrive, balancing prior beliefs against new evidence through the
-    Kalman gain.
+    The filter recursively updates its estimate of the latent expected return vector 
+    as new observations arrive, balancing prior beliefs against new evidence through 
+    the Kalman gain.
 
     Parameters
     ----------
@@ -170,7 +169,7 @@ def build_filter_from_training(train_returns: pd.DataFrame, q_scale: float = Q_S
     n_assets = train_returns.shape[1]
 
     # Estimate observation noise from training data
-    R = train_returns.cov().values
+    R = train_returns.cov().values + np.eye(n_assets) * 1e-6
 
     # Initialize filter
     kf = KalmanReturnFilter(n_assets=n_assets, q_scale=q_scale, R=R)
