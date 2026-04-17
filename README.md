@@ -1,4 +1,4 @@
-# Adaptive Portfolio Optimization Using Kalman Filtering for Time-Varying Return Estimation
+# Adaptive Portfolio Optimization Using Kalman Filtering for Dynamic Covariance Estimation
 
 **Krish Tanwar** · Working Paper · April 2026
 
@@ -6,31 +6,31 @@
 
 ## Overview
 
-This project investigates whether replacing static rolling-window return estimates with Kalman Filter-based adaptive estimates improves portfolio construction under the classical Markowitz mean-variance framework.
+This project investigates whether replacing static rolling-window covariance estimates with Kalman Filter-based adaptive estimates improves portfolio construction under the classical Markowitz mean-variance framework.
 
-The core problem: mean-variance optimization is highly sensitive to the quality of expected return estimates. In non-stationary markets, rolling-window estimates adapt too slowly to regime changes and weight all observations within the window equally — ignoring information decay. We reformulate expected return estimation as a state-space filtering problem, applying a Kalman Filter to produce continuously updated, noise-regularised estimates of μ_t that are then passed to the portfolio optimizer.
+The core problem: mean-variance optimization is sensitive to the quality of covariance estimates. In non-stationary markets, rolling-window estimators weight all observations within the window equally, ignoring information decay. We reformulate covariance estimation as a state-space filtering problem, applying a Kalman Filter to produce continuously updated, noise-regularised estimates of Σ_t that are then passed to the portfolio optimizer.
 
 ---
 
 ## Research Question
 
-> Do Kalman Filter-based estimates of time-varying expected returns improve out-of-sample portfolio performance relative to classical rolling-window mean-variance optimization, and does any performance advantage concentrate in specific market regimes?
+> Does Kalman Filter-based adaptive covariance estimation produce measurably superior covariance forecasts, and does any forecasting advantage translate into out-of-sample portfolio outperformance — or does a gap exist between estimation quality and allocation quality?
 
 ---
 
 ## Key Findings
 
-**1. Out-of-sample outperformance.**
-In the held-out test period, Kalman MV achieves a Sharpe ratio of **1.42** versus **1.14** for rolling MV and **0.82** for static MV, while recording the lowest maximum drawdown of all strategies (**-9.3%**).
+**1. Kalman is a statistically superior covariance forecaster.**
+A Diebold-Mariano test rejects equal forecast accuracy in favour of Kalman on 4 of 6 assets (EFA, QQQ, SPY, VNQ) at the 5% level, and is significant overall (DM = −4.51, p < 0.001). GLD and TLT show no significant difference.
 
-**2. Forecast accuracy vs portfolio performance are distinct.**
-A Diebold-Mariano test reveals the Kalman filter does not improve one-step-ahead return forecast accuracy in MSE terms. The portfolio benefit therefore operates through regularisation of optimizer inputs rather than superior point prediction — consistent with the estimation vs prediction distinction in the forecasting literature.
+**2. Superior forecasting does not unconditionally translate to superior portfolio performance.**
+In the held-out test period, Kalman MV achieves a Sharpe ratio of **1.051** versus **1.137** for Rolling MV. This gap is not statistically significant — 95% block bootstrap confidence intervals overlap substantially across all strategies — but it establishes that estimation quality and allocation quality are distinct objectives in MV portfolios.
 
-**3. Regime-dependent advantage.**
-Kalman MV outperformance concentrates in moderate-volatility (+0.28 Sharpe advantage) and crisis regimes (+0.02), with underperformance in low-volatility environments where turnover costs dominate and estimation risk is minimal.
+**3. The value of adaptive estimation is regime-conditional.**
+Kalman MV outperforms Rolling MV in medium-volatility (+0.126 Sharpe advantage) and crisis regimes (+0.117). It underperforms in high-volatility environments (−0.108), where persistent volatility causes the filter to over-adapt to noise, generating excess turnover without signal improvement.
 
-**4. No statistically significant full-period difference.**
-Block bootstrap confidence intervals (n=1,000, block size=20 days) reveal substantial overlap across all strategies' Sharpe ratios over the full 2010–2026 period, indicating full-period differences are not statistically distinguishable from sampling variation.
+**4. No strategy achieves statistically distinguishable full-period Sharpe.**
+Block bootstrap 95% CIs span ~0.28 Sharpe units for all strategies, confirming no strategy dominates unconditionally. Regime-conditional analysis is necessary to identify where each approach adds value.
 
 ---
 
@@ -38,41 +38,43 @@ Block bootstrap confidence intervals (n=1,000, block size=20 days) reveal substa
 
 ### State-Space Model
 
-Expected returns are modelled as a latent state following a random walk:
+The covariance structure is modelled as a latent state following a random walk:
 
 ```
-State transition:  μ_t = F · μ_{t-1} + w_t,    w_t ~ N(0, Q)
-Observation:       r_t = H · μ_t   + v_t,    v_t ~ N(0, R)
+State transition:  Σ_t = F · Σ_{t-1} + w_t,    w_t ~ N(0, Q)
+Observation:       r_t = H · Σ_t   + v_t,       v_t ~ N(0, R)
 ```
 
 Where:
-- `F = I` (random walk — returns have no predictable drift structure)
-- `H = I` (returns are direct noisy observations of expected returns)
-- `Q = 1e-5 × I` (process noise — controls filter adaptation speed)
+- `F = I` (random walk — covariance has no predictable mean-reversion)
+- `H = I` (returns are direct noisy observations of the covariance state)
+- `Q` = calibrated via walk-forward cross-validation (see below)
 - `R` = sample return variance from training data (observation noise)
+
+### Q Calibration — Walk-Forward Cross-Validation
+
+Process noise Q controls filter adaptation speed and is calibrated via walk-forward cross-validation on the training period, minimising out-of-sample RMSE across expanding windows. EM (Expectation-Maximization) was evaluated but abandoned: MLE for local-level models allows Q → 0 to perfectly fit training data, causing degenerate solutions (Q ≈ 3.87e-8) and a near-static filter that failed to converge within 200 iterations. Walk-forward CV avoids this degeneracy by optimising predictive rather than in-sample fit.
 
 ### Kalman Filter Update
 
-At each time step t, the filter performs two steps:
+At each time step t:
 
 **Predict:**
 ```
-μ̂_{t|t-1} = F · μ̂_{t-1}
+Σ̂_{t|t-1} = F · Σ̂_{t-1}
 P_{t|t-1}  = F · P_{t-1} · F' + Q
 ```
 
 **Update:**
 ```
-K_t        = P_{t|t-1} · H' · (H · P_{t|t-1} · H' + R)^{-1}   [Kalman gain]
-μ̂_t        = μ̂_{t|t-1} + K_t · (r_t - H · μ̂_{t|t-1})
+K_t        = P_{t|t-1} · H' · (H · P_{t|t-1} · H' + R)^{-1}
+Σ̂_t        = Σ̂_{t|t-1} + K_t · (r_t - H · Σ̂_{t|t-1})
 P_t        = (I - K_t · H) · P_{t|t-1}
 ```
 
-The Kalman gain K_t determines how much weight to place on new observations versus the prior estimate. When observation noise R is large relative to process noise Q, the filter trusts the prior more and updates slowly.
-
 ### Portfolio Optimization
 
-At each monthly rebalancing date, solve:
+At each monthly rebalancing date:
 
 ```
 max   w'μ̂_t - (λ/2) · w'Σ̂_t · w
@@ -81,11 +83,11 @@ s.t.  Σ w_i = 1  (fully invested)
       w_i ≤ 0.40 (position cap)
 ```
 
-Where `λ = 2` (risk aversion) and `Σ̂_t` is a 60-day rolling sample covariance matrix.
+Where `λ = 2` (risk aversion) and `μ̂_t` is a 60-day rolling mean for all strategies. Kalman MV differs from Rolling MV only in its covariance estimate `Σ̂_t`.
 
 ### Regime Classification
 
-Market regimes are defined data-driven using 21-day rolling realized volatility (annualized), classified into terciles plus a crisis threshold:
+Market regimes defined via 21-day rolling realized volatility (annualized), classified into terciles plus a crisis threshold:
 
 | Regime | Definition |
 |--------|-----------|
@@ -103,7 +105,7 @@ Market regimes are defined data-driven using 21-day rolling realized volatility 
 | Equal Weight | N/A | N/A | Monthly |
 | Static MV | Training mean (fixed) | Training cov (fixed) | Monthly |
 | Rolling MV | 60-day rolling mean | 60-day rolling | Monthly |
-| **Kalman MV** | **Kalman filtered** | 60-day rolling | **Monthly** |
+| **Kalman MV** | 60-day rolling mean | **Kalman filtered** | Monthly |
 
 ---
 
@@ -111,40 +113,59 @@ Market regimes are defined data-driven using 21-day rolling realized volatility 
 
 ### Full Period (2010–2026)
 
-| Strategy | Ann. Return | Sharpe | Max Drawdown | Turnover |
-|----------|------------|--------|--------------|----------|
+| Strategy | Ann. Return | Sharpe | Max Drawdown | Avg Turnover |
+|----------|------------|--------|--------------|--------------|
 | Equal Weight | 8.56% | 0.714 | -28.1% | 0.00 |
 | Rolling MV | 10.45% | 0.786 | -31.4% | 0.74 |
-| Static MV | 12.60% | **0.817** | -27.8% | 0.00 |
-| Kalman MV | 8.81% | 0.652 | -33.8% | 1.08 |
+| Static MV | 12.60% | 0.817 | -27.8% | 0.00 |
+| Kalman MV | 10.28% | 0.781 | -29.2% | 0.86 |
 
-### Out-of-Sample Test Period
+### Out-of-Sample Test Period (Jan 2025 – Mar 2026)
 
-| Strategy | Ann. Return | Sharpe | Max Drawdown |
-|----------|------------|--------|--------------|
-| Equal Weight | 14.35% | 1.122 | -11.1% |
-| Rolling MV | 17.39% | 1.137 | -12.5% |
-| Static MV | 14.04% | 0.822 | -17.2% |
-| **Kalman MV** | **18.44%** | **1.420** | **-9.3%** |
+| Strategy | Ann. Return | Sharpe | Max Drawdown | Avg Turnover |
+|----------|------------|--------|--------------|--------------|
+| Equal Weight | 14.35% | 1.122 | -11.1% | 0.00 |
+| Rolling MV | 17.39% | **1.137** | -12.5% | 0.53 |
+| Static MV | 14.04% | 0.822 | -17.2% | 0.00 |
+| Kalman MV | 16.49% | 1.051 | -12.9% | 0.63 |
 
 ### Sharpe by Market Regime
 
-| Regime | Equal Weight | Rolling MV | Static MV | Kalman MV |
-|--------|-------------|------------|-----------|-----------|
-| LOW_VOL (n=1341d) | 1.923 | 1.801 | 2.195 | 1.368 |
-| MED_VOL (n=1381d) | 0.546 | 0.669 | 0.679 | **0.945** |
-| HIGH_VOL (n=1213d) | 0.648 | 0.471 | 0.610 | 0.277 |
-| CRISIS (n=128d) | 0.354 | 0.813 | 0.660 | **0.828** |
+| Regime | N Days | Equal Weight | Rolling MV | Static MV | Kalman MV | Kalman Advantage |
+|--------|--------|-------------|------------|-----------|-----------|-----------------|
+| LOW_VOL | 1,341 | 1.923 | 1.801 | 2.195 | 1.816 | +0.015 |
+| MED_VOL | 1,381 | 0.546 | 0.669 | 0.679 | **0.795** | **+0.126** |
+| HIGH_VOL | 1,213 | 0.648 | 0.471 | 0.610 | 0.363 | −0.108 |
+| CRISIS | 128 | 0.354 | 0.813 | 0.660 | **0.930** | **+0.117** |
 
 ---
 
 ## Statistical Testing
 
-**Diebold-Mariano Test (forecast accuracy)**
-Tests whether Kalman-filtered return estimates have significantly lower MSE than rolling-window estimates. Result: Kalman filter does not improve point forecast accuracy (DM statistics positive across all assets, p=1.0 for one-sided test). Interpretation: the filter's value lies in regularisation for portfolio construction, not return prediction.
+### Diebold-Mariano Test (covariance forecast accuracy)
 
-**Block Bootstrap Sharpe CIs (n=1,000, block=20 days)**
-95% confidence intervals overlap substantially across all strategies over the full period. Differences in full-period Sharpe ratios are not statistically significant at conventional levels.
+One-sided test, H₁: Kalman has strictly lower squared forecast error than Rolling MV.
+
+| Asset | DM Statistic | p-value | Conclusion |
+|-------|-------------|---------|------------|
+| EFA | −3.063 | 0.001 | Kalman superior |
+| GLD | 0.174 | 0.569 | No difference |
+| QQQ | −2.906 | 0.002 | Kalman superior |
+| SPY | −2.622 | 0.004 | Kalman superior |
+| TLT | 1.108 | 0.866 | No difference |
+| VNQ | −2.065 | 0.020 | Kalman superior |
+| **Overall** | **−4.508** | **<0.001** | **Kalman superior** |
+
+### Block Bootstrap Sharpe CIs (n=1,000, block=20 days)
+
+| Strategy | Sharpe | 95% CI |
+|----------|--------|--------|
+| Equal Weight | 0.746 | [0.279, 1.326] |
+| Rolling MV | 0.815 | [0.372, 1.347] |
+| Static MV | 0.847 | [0.413, 1.382] |
+| Kalman MV | 0.810 | [0.382, 1.371] |
+
+All intervals overlap substantially. No strategy achieves statistically superior full-period risk-adjusted performance.
 
 ---
 
@@ -162,6 +183,7 @@ kalman-portfolio/
 ├── evaluation.py          # Performance metrics
 ├── statistical_tests.py   # Diebold-Mariano + block bootstrap Sharpe CIs
 ├── regime_detector.py     # Volatility-based regime classification
+├── q_calibration.py       # Walk-forward CV for Q selection
 ├── plots.py               # Core figures
 ├── plots_extended.py      # Statistical test and regime figures
 ├── main.py                # End-to-end pipeline
@@ -210,20 +232,20 @@ yfinance, cvxpy, filterpy
 
 ## Limitations
 
-- Linear Gaussian Kalman Filter assumes Gaussian return distributions; real returns exhibit fat tails and skewness
-- Process noise Q is fixed (1e-5); adaptive Q estimation (e.g. EM algorithm) is a natural extension
-- Long-only constraint with 40% position cap may suppress Kalman MV outperformance in low-volatility regimes
-- Simultaneous equity-bond drawdowns (2022 rate hike cycle) violate the diversification assumptions embedded in the model
-- Transaction costs are not modelled; Kalman MV's higher turnover (1.08 vs 0.74) would erode real-world returns
+- Kalman Filter assumes Gaussian return distributions; real returns exhibit fat tails and skewness
+- Q is calibrated via walk-forward CV on training data; optimal Q may shift across market regimes
+- Long-only constraint with 40% position cap limits the optimizer's ability to act on covariance signal
+- Simultaneous equity-bond drawdowns (2022 rate hike cycle) violate diversification assumptions embedded in the model
+- Kalman MV's higher turnover (0.86 full period vs 0.74 for Rolling MV) erodes real-world returns; cost sensitivity analysis shows the gap narrows but persists at realistic transaction costs
 
 ---
 
 ## Extensions
 
-- Adaptive Q estimation via Expectation-Maximization
-- Ledoit-Wolf covariance shrinkage to replace rolling sample covariance
+- Regime-conditional Q: attenuate process noise during HIGH_VOL regimes to reduce over-adaptation
+- Ledoit-Wolf covariance shrinkage as an alternative to rolling sample covariance
 - Non-linear filtering (Extended Kalman Filter, Unscented Kalman Filter) for non-Gaussian return dynamics
-- Regime-switching state-space model to allow discrete structural breaks
+- Regime-switching state-space model to allow discrete structural breaks in covariance dynamics
 
 ---
 
@@ -232,5 +254,6 @@ yfinance, cvxpy, filterpy
 - Markowitz, H. (1952). Portfolio Selection. *Journal of Finance*, 7(1), 77–91.
 - Kalman, R.E. (1960). A New Approach to Linear Filtering and Prediction Problems. *Journal of Basic Engineering*, 82(1), 35–45.
 - Diebold, F.X. & Mariano, R.S. (1995). Comparing Predictive Accuracy. *Journal of Business & Economic Statistics*, 13(3), 253–263.
+- DeMiguel, V., Garlappi, L. & Uppal, R. (2009). Optimal Versus Naive Diversification. *Review of Financial Studies*, 22(5), 1915–1953.
 - Ledoit, O. & Wolf, M. (2008). Robust Performance Hypothesis Testing with the Sharpe Ratio. *Journal of Empirical Finance*, 15(5), 850–859.
-- Meucci, A. (2010). Fully Flexible Views: Theory and Practice. *Risk*, 23(10), 97–102.
+- Kan, R. & Zhou, G. (2007). Optimal Portfolio Choice with Parameter Uncertainty. *Journal of Financial and Quantitative Analysis*, 42(3), 621–656.
