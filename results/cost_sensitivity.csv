@@ -1,0 +1,17 @@
+Period,Strategy,Cost (bps),Avg Turnover,Ann. Return (%),Ann. Vol (%),Sharpe,Max Drawdown (%)
+Full,Equal Weight,0,0.0,8.94,11.99,0.746,-28.11
+Full,Rolling MV,0,0.7447,10.84,13.3,0.815,-31.37
+Full,Static MV,0,0.0074,13.07,15.42,0.847,-27.8
+Full,Kalman MV,0,0.8654,10.66,13.16,0.81,-29.22
+Full,Equal Weight,5,0.0,8.94,11.99,0.746,-28.11
+Full,Rolling MV,5,0.7447,10.53,13.3,0.792,-31.7
+Full,Static MV,5,0.0074,13.07,15.42,0.847,-27.8
+Full,Kalman MV,5,0.8654,10.3,13.16,0.783,-29.52
+Full,Equal Weight,10,0.0,8.94,11.99,0.746,-28.11
+Full,Rolling MV,10,0.7447,10.22,13.3,0.768,-32.02
+Full,Static MV,10,0.0074,13.07,15.42,0.847,-27.8
+Full,Kalman MV,10,0.8654,9.94,13.16,0.755,-29.81
+Full,Equal Weight,20,0.0,8.94,11.99,0.746,-28.11
+Full,Rolling MV,20,0.7447,9.6,13.31,0.721,-32.68
+Full,Static MV,20,0.0074,13.07,15.42,0.847,-27.8
+Full,Kalman MV,20,0.8654,9.22,13.17,0.7,-30.39

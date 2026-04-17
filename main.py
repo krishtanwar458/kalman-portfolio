@@ -34,14 +34,22 @@ def main():
     returns = compute_returns(prices)
     train, test = split_data(returns)
 
-    # Step 2: Build Kalman Filter
-    print("\n=== STEP 2: Building Kalman Filter ===")
-    kf = build_filter_from_training(train, q_scale=Q_SCALE)
-    print(f"  Filter initialized with Q_scale={Q_SCALE}")
-    print(f"  Initial mu (annualized): {(kf.mu_hat * 252).round(4)}")
+    # Step 2: Calibrate Q via walk-forward CV on training data only
+    print("\n=== STEP 2: Calibrating Kalman Filter (Walk-Forward CV) ===")
 
-    # Run filter on full dataset for the comparison plot
-    kf_for_plot = build_filter_from_training(train, q_scale=Q_SCALE)
+    from q_calibration import select_q_cv, plot_q_selection
+
+    q_best, q_results = select_q_cv(train, verbose=True)
+    plot_q_selection(q_results, q_best, save_path=f"{PLOTS_DIR}/q_selection.png")
+
+    print(f"\n  CV-selected Q_SCALE = {q_best:.4e}")
+
+    # Sync config so cost_analysis and any other modules pick up q_best
+    import config
+    config.Q_SCALE = q_best
+
+    kf = build_filter_from_training(train, q_scale=q_best)
+    kf_for_plot = build_filter_from_training(train, q_scale=q_best)
     filtered_mu = kf_for_plot.filter_returns(returns)
 
     # Step 3: Run Backtests
@@ -50,9 +58,9 @@ def main():
     # Define strategies
     strategies = [
         ("Equal Weight", equal_weight_strategy),
-        ("Rolling MV", make_rolling_mv_strategy()),
-        ("Static MV", make_static_mv_strategy(train)),
-        ("Kalman MV", make_kalman_strategy(train, q_scale=Q_SCALE)),
+        ("Rolling MV",   make_rolling_mv_strategy()),
+        ("Static MV",    make_static_mv_strategy(train)),
+        ("Kalman MV",    make_kalman_strategy(train, q_scale=q_best)),
     ]
 
     # Run each strategy on the FULL period (train + test)
@@ -69,7 +77,7 @@ def main():
             strat_func = make_static_mv_strategy(train)
         elif name == "Kalman MV":
             # Warm up the Kalman filter on training data first
-            strat_func = make_kalman_strategy(train, q_scale=Q_SCALE)
+            strat_func = make_kalman_strategy(train, q_scale=q_best)
             # Feed training data through the filter before test
             for i in range(len(train)):
                 strat_func(train.index[i], returns.iloc[:len(train)])
@@ -125,11 +133,11 @@ def main():
     from statistical_tests import run_all_tests
 
     stat_results = run_all_tests(
-        results=results_full,         # backtest results list
-        filtered_mu=filtered_mu,      # Kalman-filtered expected returns (T x N DataFrame)
-        returns=returns,              # actual daily returns (T x N DataFrame)
-        rolling_window=60,            # must match ROLLING_WINDOW in config.py
-        n_bootstrap=1000,             # 1000 is standard; use 500 if slow
+        results=results_full,
+        filtered_mu=filtered_mu,
+        returns=returns,
+        rolling_window=60,
+        n_bootstrap=1000,
     )
 
     # Save Sharpe CI table to CSV
@@ -140,7 +148,6 @@ def main():
     dm_df = pd.DataFrame(stat_results["dm_results"]).T
     dm_df.to_csv(f"{RESULTS_DIR}/diebold_mariano_results.csv")
     print(f"  DM test results saved to {RESULTS_DIR}/diebold_mariano_results.csv")
-
 
     # Step 7: Regime Analysis
     print("\n=== STEP 7: Regime-Conditional Performance Analysis ===")
@@ -172,36 +179,45 @@ def main():
     print(sharpe_by_regime.to_string())
     sharpe_by_regime.to_csv(f"{RESULTS_DIR}/regime_sharpe_table.csv")
 
-    # Kalman advantage by regime (the key table)
+    # Kalman advantage by regime
     advantage = kalman_outperformance_by_regime(results_full, regimes, baseline="Rolling MV")
     print("\n  Kalman MV Advantage by Regime:")
     print(advantage.to_string())
     advantage.to_csv(f"{RESULTS_DIR}/kalman_advantage_by_regime.csv")
 
-
     # Step 8: Extended Plots
     print("\n=== STEP 8: Extended Plots ===")
 
-    # Sharpe CI forest plot
     plot_sharpe_confidence_intervals(stat_results["sharpe_cis"])
-
-    # Regime Sharpe grouped bar
     plot_regime_performance(sharpe_by_regime)
-
-    # Kalman advantage bar chart (the money chart)
     plot_kalman_advantage_by_regime(advantage)
 
-    # Realized vol timeline with regime shading
     vol_series = compute_realized_volatility(returns, window=21)
     plot_realized_volatility_with_regimes(vol_series, regimes)
 
-    # Forecast error comparison (DM companion figure)
-    for asset in ["SPY", "TLT"]:  # show for 2 representative assets
+    for asset in ["SPY", "TLT"]:
         plot_forecast_error_comparison(
             stat_results["forecast_errors"]["kalman"],
             stat_results["forecast_errors"]["rolling"],
             asset=asset,
         )
+
+    # Step 9: Transaction Cost Sensitivity
+    print("\n=== STEP 9: Transaction Cost Sensitivity ===")
+
+    from cost_analysis import run_sensitivity, plot_sensitivity, print_sharpe_pivot
+
+    # Full period
+    df_costs_full = run_sensitivity(returns, train, period_label="Full")
+    print_sharpe_pivot(df_costs_full, "Full")
+    df_costs_full.to_csv(f"{RESULTS_DIR}/cost_sensitivity.csv", index=False)
+    plot_sensitivity(df_costs_full, period_label="Full", filename="cost_sensitivity_full.png")
+
+    # OOS period
+    df_costs_oos = run_sensitivity(test, train, period_label="OOS")
+    print_sharpe_pivot(df_costs_oos, "OOS")
+    df_costs_oos.to_csv(f"{RESULTS_DIR}/cost_sensitivity_oos.csv", index=False)
+    plot_sensitivity(df_costs_oos, period_label="OOS", filename="cost_sensitivity_oos.png")
 
     print("\n=== ALL DONE ===")
     print(f"Results: ./{RESULTS_DIR}/")

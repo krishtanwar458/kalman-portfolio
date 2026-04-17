@@ -153,7 +153,7 @@ def build_filter_from_training(train_returns: pd.DataFrame, q_scale: float = Q_S
     Convenience function: build and initialize a KalmanReturnFilter
     from training data.
 
-    - R is estimated as the sample covariance of training returns
+    - R is estimated as the sample colvariance of training returns
     - Initial mu_0 is the mean of training returns
     - Initial P_0 is a small diagonal matrix
 

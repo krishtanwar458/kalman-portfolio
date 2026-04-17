@@ -3,39 +3,36 @@ TICKERS = ["SPY", "QQQ", "TLT", "GLD", "EFA", "VNQ"]
 
 # Sample Period
 TRAIN_START = "2010-01-01"
-TRAIN_END = "2024-12-31"
-TEST_START = "2025-01-01"
-TEST_END = "2026-03-31"
+TRAIN_END   = "2024-12-31"
+TEST_START  = "2025-01-01"
+TEST_END    = "2026-03-31"
 
 # Kalman Filter Parameters
-# F = Identity (random walk assumption for latent expected returns)
-# H = Identity (we directly observe returns)
-# Q = process noise — how fast we believe true returns drift
-# R = observation noise — estimated from training data
-Q_SCALE = 1e-5  # multiplied by identity matrix
-# R is computed from data in kalman_filter.py
+# Q_SCALE is a fallback only — at runtime, main.py estimates Q_SCALE
+# via EM (Shumway & Stoffer, 2000) on training data and overrides this value.
+# All strategy functions accept q_scale as an argument so EM value propagates.
+Q_SCALE = 1e-5   # fallback default, overridden by EM in main.py
 
 # Portfolio Optimization
-RISK_AVERSION = 2.0       # lambda in mean-variance objective
-LONG_ONLY = True          # w_i >= 0
-FULLY_INVESTED = True     # sum(w_i) = 1
+RISK_AVERSION   = 2.0    # lambda in mean-variance objective
+LONG_ONLY       = True   # w_i >= 0
+FULLY_INVESTED  = True   # sum(w_i) = 1
+MAX_WEIGHT      = 0.4   # maximum weight per asset
 
 # Backtest Settings
-REBALANCE_FREQ = "ME"      # M = monthly, W = weekly
-COV_WINDOW = 60           # rolling window for covariance estimation (trading days)
-RETURN_WINDOW = 60        # rolling window for benchmark return estimation
+REBALANCE_FREQ  = "ME"   # ME = month-end, W = weekly
+COV_WINDOW      = 60     # rolling window for covariance estimation (trading days)
+RETURN_WINDOW   = 60     # rolling window for benchmark return estimation
 
-# Regime Periods (for analysis)
+# Regime Periods (for sub-period analysis)
 REGIMES = {
     "Pre-COVID":   ("2020-01-01", "2020-02-19"),
-    "COVID Crash":  ("2020-02-20", "2020-06-30"),
-    "Recovery":     ("2020-07-01", "2021-12-31"),
-    "Rate Hikes":   ("2022-01-01", "2023-12-31"),
-    "Recent":       ("2024-01-01", "2026-03-31"),
+    "COVID Crash": ("2020-02-20", "2020-06-30"),
+    "Recovery":    ("2020-07-01", "2021-12-31"),
+    "Rate Hikes":  ("2022-01-01", "2023-12-31"),
+    "Recent":      ("2024-01-01", "2026-03-31"),
 }
 
 # Output
 RESULTS_DIR = "results"
-PLOTS_DIR = "plots"
-
-MAX_WEIGHT = 0.40  # maximum weight per asset
+PLOTS_DIR   = "plots"
