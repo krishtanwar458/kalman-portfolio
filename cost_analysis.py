@@ -28,7 +28,7 @@ from benchmarks import (
 COST_LEVELS_BPS = [0, 5, 10, 20]
 
 
-def annualised_metrics(daily_returns: pd.Series) -> dict:
+def annualized_metrics(daily_returns: pd.Series) -> dict:
     ann_ret = daily_returns.mean() * 252
     ann_vol = daily_returns.std() * np.sqrt(252)
     sharpe  = ann_ret / ann_vol if ann_vol > 0 else 0.0
@@ -42,8 +42,13 @@ def annualised_metrics(daily_returns: pd.Series) -> dict:
     }
 
 
-def run_sensitivity(returns: pd.DataFrame, train: pd.DataFrame, period_label: str = "Full") -> pd.DataFrame:
-    """Run all strategies × all cost levels on the given return series."""
+def run_sensitivity(
+    returns: pd.DataFrame,
+    train: pd.DataFrame,
+    period_label: str = "Full",
+    regime_labels: pd.Series = None,
+    regime_alphas: dict = None,
+) -> pd.DataFrame:
     rows = []
 
     for bps in COST_LEVELS_BPS:
@@ -51,12 +56,17 @@ def run_sensitivity(returns: pd.DataFrame, train: pd.DataFrame, period_label: st
             ("Equal Weight", equal_weight_strategy,          0.0),
             ("Rolling MV",   make_rolling_mv_strategy(),     bps),
             ("Static MV",    make_static_mv_strategy(train), 0.0),
-            ("Kalman MV",    make_kalman_strategy(train, q_scale=config.Q_SCALE), bps),
+            ("Kalman MV",    make_kalman_strategy(
+                                train,
+                                q_scale=config.Q_SCALE,
+                                regime_labels=regime_labels,
+                                regime_alphas=regime_alphas,
+                             ), bps),
         ]
 
         for name, strat_func, effective_bps in strategies:
             result = run_backtest(returns, strat_func, name=name, cost_bps=effective_bps)
-            m = annualised_metrics(result["daily_returns"])
+            m = annualized_metrics(result["daily_returns"])
             avg_turnover = result["turnover_series"].mean() if len(result["turnover_series"]) > 0 else 0.0
             rows.append({
                 "Period":           period_label,
@@ -67,7 +77,6 @@ def run_sensitivity(returns: pd.DataFrame, train: pd.DataFrame, period_label: st
             })
 
     return pd.DataFrame(rows)
-
 
 def print_sharpe_pivot(df: pd.DataFrame, period_label: str = ""):
     order = ["Equal Weight", "Rolling MV", "Static MV", "Kalman MV"]
@@ -99,7 +108,7 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
 
     for ax, ylabel, title in zip(
         axes,
-        ["Annualised Sharpe Ratio", "Annualised Return (%)"],
+        ["Annualized Sharpe Ratio", "Annualized Return (%)"],
         ["Sharpe Ratio vs Transaction Cost", "Return vs Transaction Cost"],
     ):
         ax.set_xlabel("One-way Transaction Cost (bps)", fontsize=12)

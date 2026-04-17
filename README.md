@@ -8,7 +8,7 @@
 
 This project investigates whether replacing static rolling-window covariance estimates with Kalman Filter-based adaptive estimates improves portfolio construction under the classical Markowitz mean-variance framework.
 
-The core problem: mean-variance optimization is sensitive to the quality of covariance estimates. In non-stationary markets, rolling-window estimators weight all observations within the window equally, ignoring information decay. We reformulate covariance estimation as a state-space filtering problem, applying a Kalman Filter to produce continuously updated, noise-regularised estimates of Σ_t that are then passed to the portfolio optimizer.
+The core problem: mean-variance optimization is sensitive to the quality of covariance estimates. In non-stationary markets, rolling-window estimators weight all observations within the window equally, ignoring information decay. We reformulate covariance estimation as a state-space filtering problem, applying a Kalman Filter to produce continuously updated, noise-regularized estimates of Σ_t that are then passed to the portfolio optimizer.
 
 ---
 
@@ -21,7 +21,7 @@ The core problem: mean-variance optimization is sensitive to the quality of cova
 ## Key Findings
 
 **1. Kalman is a statistically superior covariance forecaster.**
-A Diebold-Mariano test rejects equal forecast accuracy in favour of Kalman on 4 of 6 assets (EFA, QQQ, SPY, VNQ) at the 5% level, and is significant overall (DM = −4.51, p < 0.001). GLD and TLT show no significant difference.
+A Diebold-Mariano test rejects equal forecast accuracy in favor of Kalman on 4 of 6 assets (EFA, QQQ, SPY, VNQ) at the 5% level, and is significant overall (DM = −4.51, p < 0.001). GLD and TLT show no significant difference.
 
 **2. Superior forecasting does not unconditionally translate to superior portfolio performance.**
 In the held-out test period, Kalman MV achieves a Sharpe ratio of **1.051** versus **1.137** for Rolling MV. This gap is not statistically significant — 95% block bootstrap confidence intervals overlap substantially across all strategies — but it establishes that estimation quality and allocation quality are distinct objectives in MV portfolios.
@@ -38,7 +38,7 @@ Block bootstrap 95% CIs span ~0.28 Sharpe units for all strategies, confirming n
 
 ### State-Space Model
 
-The covariance structure is modelled as a latent state following a random walk:
+The covariance structure is modeled as a latent state following a random walk:
 
 ```
 State transition:  Σ_t = F · Σ_{t-1} + w_t,    w_t ~ N(0, Q)
@@ -53,7 +53,7 @@ Where:
 
 ### Q Calibration — Walk-Forward Cross-Validation
 
-Process noise Q controls filter adaptation speed and is calibrated via walk-forward cross-validation on the training period, minimising out-of-sample RMSE across expanding windows. EM (Expectation-Maximization) was evaluated but abandoned: MLE for local-level models allows Q → 0 to perfectly fit training data, causing degenerate solutions (Q ≈ 3.87e-8) and a near-static filter that failed to converge within 200 iterations. Walk-forward CV avoids this degeneracy by optimising predictive rather than in-sample fit.
+Process noise Q controls filter adaptation speed and is calibrated via walk-forward cross-validation on the training period, minimizing out-of-sample RMSE across expanding windows. EM (Expectation-Maximization) was evaluated but abandoned: MLE for local-level models allows Q → 0 to perfectly fit training data, causing degenerate solutions (Q ≈ 3.87e-8) and a near-static filter that failed to converge within 200 iterations. Walk-forward CV avoids this degeneracy by optimizing predictive rather than in-sample fit.
 
 ### Kalman Filter Update
 

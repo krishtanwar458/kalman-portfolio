@@ -76,15 +76,14 @@ class KalmanReturnFilter:
         self.mu_hat = mu_0.copy()
         self.P = P_0 if P_0 is not None else np.eye(self.n) * 1e-4
 
-    def predict(self):
+    def predict(self, q_override=None):
         """
         Prediction step: propagate state estimate forward.
-
-        mu_{t|t-1} = F * mu_{t-1|t-1}
-        P_{t|t-1}  = F * P_{t-1|t-1} * F' + Q
+        q_override: if provided, use this matrix instead of self.Q for this step only.
         """
+        Q_use = q_override if q_override is not None else self.Q
         self.mu_hat = self.F @ self.mu_hat
-        self.P = self.F @ self.P @ self.F.T + self.Q
+        self.P = self.F @ self.P @ self.F.T + Q_use
 
     def update(self, r_observed: np.ndarray):
         """

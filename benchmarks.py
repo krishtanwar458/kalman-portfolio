@@ -20,7 +20,7 @@ from kalman_filter import KalmanReturnFilter
 from config import COV_WINDOW, RETURN_WINDOW, Q_SCALE
 
 
-# ─── 1. Equal Weight ─────────────────────────────────────────────
+# 1. Equal Weight
 
 def equal_weight_strategy(date, returns_so_far):
     """1/N equal weight across all assets."""
@@ -28,7 +28,7 @@ def equal_weight_strategy(date, returns_so_far):
     return np.ones(n) / n
 
 
-# ─── 2. Rolling Mean-Variance ────────────────────────────────────
+# 2. Rolling Mean-Variance 
 
 def make_rolling_mv_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW):
     """
@@ -49,7 +49,7 @@ def make_rolling_mv_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW):
     return strategy
 
 
-# ─── 3. Static Mean-Variance ─────────────────────────────────────
+# 3. Static Mean-Variance 
 
 def make_static_mv_strategy(train_returns: pd.DataFrame):
     """
@@ -66,47 +66,47 @@ def make_static_mv_strategy(train_returns: pd.DataFrame):
     return strategy
 
 
-# ─── 4. Kalman Filter Strategy ───────────────────────────────────
+# 4. Kalman Filter Strategy 
 
 def make_kalman_strategy(
     train_returns: pd.DataFrame,
     q_scale: float = Q_SCALE,
     cov_window: int = COV_WINDOW,
+    regime_labels: pd.Series = None,
+    regime_alphas: dict = None,
 ):
-    """
-    Factory: creates the Kalman Filter portfolio strategy.
-
-    Uses a Kalman Filter to estimate time-varying expected returns,
-    combined with rolling covariance, fed into mean-variance optimizer.
-
-    This is the core contribution of the paper.
-    """
     n_assets = train_returns.shape[1]
 
-    # Initialize Kalman Filter from training data
     R = train_returns.cov().values
     kf = KalmanReturnFilter(n_assets=n_assets, q_scale=q_scale, R=R)
     mu_0 = train_returns.mean().values
     kf.initialize(mu_0=mu_0)
 
-    # Track whether filter has been warmed up
     last_processed_idx = 0
 
     def strategy(date, returns_so_far):
         nonlocal last_processed_idx
 
-        # Run Kalman Filter on any new observations since last call
         current_len = len(returns_so_far)
         for i in range(last_processed_idx, current_len):
             r_t = returns_so_far.iloc[i].values
-            kf.predict()
+            date_i = returns_so_far.index[i]
+
+            q_override = None
+            if (regime_labels is not None
+                    and regime_alphas is not None
+                    and date_i in regime_labels.index):
+                alpha = regime_alphas.get(regime_labels.loc[date_i], 1.0)
+                if alpha != 1.0:
+                    q_override = alpha * kf.Q
+
+            kf.predict(q_override=q_override)
             kf.update(r_t)
+
         last_processed_idx = current_len
 
-        # Get Kalman-filtered expected return estimate
         mu_kf = kf.mu_hat.copy()
 
-        # Rolling covariance (still classical for v1)
         if current_len < cov_window:
             n = returns_so_far.shape[1]
             return np.ones(n) / n

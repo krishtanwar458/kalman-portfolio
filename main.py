@@ -34,54 +34,81 @@ def main():
     returns = compute_returns(prices)
     train, test = split_data(returns)
 
-    # Step 2: Calibrate Q via walk-forward CV on training data only
+    # Step 2: Calibrate Q + Per-Regime Alphas
     print("\n=== STEP 2: Calibrating Kalman Filter (Walk-Forward CV) ===")
 
-    from q_calibration import select_q_cv, plot_q_selection
+    from q_calibration import select_q_cv, plot_q_selection, calibrate_regime_alphas
+    from regime_detector import (
+        compute_realized_volatility,
+        classify_regimes,
+        regime_summary,
+        regime_sharpe_table,
+        kalman_outperformance_by_regime,
+    )
 
+    # Calibrate base Q on training data
     q_best, q_results = select_q_cv(train, verbose=True)
     plot_q_selection(q_results, q_best, save_path=f"{PLOTS_DIR}/q_selection.png")
-
     print(f"\n  CV-selected Q_SCALE = {q_best:.4e}")
 
-    # Sync config so cost_analysis and any other modules pick up q_best
+    # Sync config
     import config
     config.Q_SCALE = q_best
 
-    kf = build_filter_from_training(train, q_scale=q_best)
+    # Compute regime labels on full returns (no lookahead — uses past vol only)
+    regime_labels = classify_regimes(returns, window=21, crisis_threshold=2.0)
+
+    # Calibrate per-regime alphas using training regime labels only
+    # CRISIS is fixed at base Q (alpha=1.0) — too few days to calibrate reliably
+    regime_labels_train = regime_labels.reindex(train.index)
+    regime_alphas, alpha_results = calibrate_regime_alphas(
+        train, regime_labels_train, q_best, verbose=True
+    )
+    print(f"\n  CV-selected regime alphas: {regime_alphas}")
+
+    # Sync config
+    config.Q_REGIME_ALPHAS = regime_alphas
+
+    # Build filter for plotting purposes
     kf_for_plot = build_filter_from_training(train, q_scale=q_best)
     filtered_mu = kf_for_plot.filter_returns(returns)
 
     # Step 3: Run Backtests
     print("\n=== STEP 3: Running Backtests ===")
 
-    # Define strategies
     strategies = [
         ("Equal Weight", equal_weight_strategy),
         ("Rolling MV",   make_rolling_mv_strategy()),
         ("Static MV",    make_static_mv_strategy(train)),
-        ("Kalman MV",    make_kalman_strategy(train, q_scale=q_best)),
+        ("Kalman MV",    make_kalman_strategy(
+                            train,
+                            q_scale=q_best,
+                            regime_labels=regime_labels,
+                            regime_alphas=regime_alphas,
+                         )),
     ]
 
-    # Run each strategy on the FULL period (train + test)
+    # Full period (train + test)
     results_full = []
     for name, strat_func in strategies:
         result = run_backtest(returns, strat_func, name=name)
         results_full.append(result)
 
-    # Also run on TEST period only for out-of-sample comparison
+    # Test period only (out-of-sample)
     results_test = []
     for name, strat_func in strategies:
-        # Rebuild strategies that need training data
         if name == "Static MV":
             strat_func = make_static_mv_strategy(train)
         elif name == "Kalman MV":
-            # Warm up the Kalman filter on training data first
-            strat_func = make_kalman_strategy(train, q_scale=q_best)
-            # Feed training data through the filter before test
+            strat_func = make_kalman_strategy(
+                train,
+                q_scale=q_best,
+                regime_labels=regime_labels,
+                regime_alphas=regime_alphas,
+            )
+            # Warm up filter on training data before test period
             for i in range(len(train)):
                 strat_func(train.index[i], returns.iloc[:len(train)])
-            # Now the filter is warmed up for the test period
 
         result = run_backtest(test, strat_func, name=name)
         results_test.append(result)
@@ -97,7 +124,6 @@ def main():
     comparison_test = compare_strategies(results_test)
     print_metrics(comparison_test)
 
-    # Regime analysis
     print("\n--- Regime Analysis (Sharpe Ratio) ---")
     regime_df = regime_analysis(results_full, REGIMES)
     print(regime_df.to_string())
@@ -114,18 +140,12 @@ def main():
     plot_cumulative_returns(results_full, "Cumulative Returns — Full Period")
     plot_drawdowns(results_full, "Drawdowns — Full Period")
 
-    # Weight plots for Kalman and Rolling MV
     for r in results_full:
         if r["name"] in ["Kalman MV", "Rolling MV"]:
             plot_weights_over_time(r)
 
-    # Filtered vs rolling expected return (key paper figure)
     plot_filtered_vs_rolling_mu(filtered_mu, returns, asset="SPY")
     plot_filtered_vs_rolling_mu(filtered_mu, returns, asset="TLT")
-
-    print("\n=== DONE ===")
-    print(f"Results in ./{RESULTS_DIR}/")
-    print(f"Plots in ./{PLOTS_DIR}/")
 
     # Step 6: Statistical Significance Tests
     print("\n=== STEP 6: Statistical Significance Tests ===")
@@ -140,25 +160,16 @@ def main():
         n_bootstrap=1000,
     )
 
-    # Save Sharpe CI table to CSV
     stat_results["sharpe_cis"].to_csv(f"{RESULTS_DIR}/sharpe_confidence_intervals.csv")
     print(f"\n  Sharpe CI table saved to {RESULTS_DIR}/sharpe_confidence_intervals.csv")
 
-    # DM results
     dm_df = pd.DataFrame(stat_results["dm_results"]).T
     dm_df.to_csv(f"{RESULTS_DIR}/diebold_mariano_results.csv")
     print(f"  DM test results saved to {RESULTS_DIR}/diebold_mariano_results.csv")
 
-    # Step 7: Regime Analysis
+    # Step 7: Regime-Conditional Performance Analysis
     print("\n=== STEP 7: Regime-Conditional Performance Analysis ===")
 
-    from regime_detector import (
-        compute_realized_volatility,
-        classify_regimes,
-        regime_summary,
-        regime_sharpe_table,
-        kalman_outperformance_by_regime,
-    )
     from plots_extended import (
         plot_sharpe_confidence_intervals,
         plot_regime_performance,
@@ -167,20 +178,17 @@ def main():
         plot_forecast_error_comparison,
     )
 
-    # Classify regimes using full return series
-    regimes = classify_regimes(returns, window=21, crisis_threshold=2.0)
-
     print("\n  Regime day counts:")
-    print(regime_summary(regimes).to_string())
+    print(regime_summary(regime_labels).to_string())
 
-    # Sharpe by regime
-    sharpe_by_regime = regime_sharpe_table(results_full, regimes)
+    sharpe_by_regime = regime_sharpe_table(results_full, regime_labels)
     print("\n  Sharpe by Regime:")
     print(sharpe_by_regime.to_string())
     sharpe_by_regime.to_csv(f"{RESULTS_DIR}/regime_sharpe_table.csv")
 
-    # Kalman advantage by regime
-    advantage = kalman_outperformance_by_regime(results_full, regimes, baseline="Rolling MV")
+    advantage = kalman_outperformance_by_regime(
+        results_full, regime_labels, baseline="Rolling MV"
+    )
     print("\n  Kalman MV Advantage by Regime:")
     print(advantage.to_string())
     advantage.to_csv(f"{RESULTS_DIR}/kalman_advantage_by_regime.csv")
@@ -193,7 +201,7 @@ def main():
     plot_kalman_advantage_by_regime(advantage)
 
     vol_series = compute_realized_volatility(returns, window=21)
-    plot_realized_volatility_with_regimes(vol_series, regimes)
+    plot_realized_volatility_with_regimes(vol_series, regime_labels)
 
     for asset in ["SPY", "TLT"]:
         plot_forecast_error_comparison(
@@ -207,18 +215,27 @@ def main():
 
     from cost_analysis import run_sensitivity, plot_sensitivity, print_sharpe_pivot
 
-    # Full period
-    df_costs_full = run_sensitivity(returns, train, period_label="Full")
+    try:
+        df_costs_full = run_sensitivity(
+            returns, train, period_label="Full",
+            regime_labels=regime_labels, regime_alphas=regime_alphas,
+        )
+        print(df_costs_full.columns.tolist())
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+
     print_sharpe_pivot(df_costs_full, "Full")
     df_costs_full.to_csv(f"{RESULTS_DIR}/cost_sensitivity.csv", index=False)
     plot_sensitivity(df_costs_full, period_label="Full", filename="cost_sensitivity_full.png")
 
-    # OOS period
-    df_costs_oos = run_sensitivity(test, train, period_label="OOS")
+    df_costs_oos = run_sensitivity(
+        test, train, period_label="OOS",
+        regime_labels=regime_labels, regime_alphas=regime_alphas,
+    )
     print_sharpe_pivot(df_costs_oos, "OOS")
     df_costs_oos.to_csv(f"{RESULTS_DIR}/cost_sensitivity_oos.csv", index=False)
     plot_sensitivity(df_costs_oos, period_label="OOS", filename="cost_sensitivity_oos.png")
-
     print("\n=== ALL DONE ===")
     print(f"Results: ./{RESULTS_DIR}/")
     print(f"Plots:   ./{PLOTS_DIR}/")

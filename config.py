@@ -12,6 +12,7 @@ TEST_END    = "2026-03-31"
 # via EM (Shumway & Stoffer, 2000) on training data and overrides this value.
 # All strategy functions accept q_scale as an argument so EM value propagates.
 Q_SCALE = 1e-5   # fallback default, overridden by EM in main.py
+Q_REGIME_ALPHAS = {}  # populated at runtime by calibrate_regime_alphas
 
 # Portfolio Optimization
 RISK_AVERSION   = 2.0    # lambda in mean-variance objective

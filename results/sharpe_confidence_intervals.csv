@@ -2,4 +2,4 @@ Strategy,Sharpe,95% CI Lower,95% CI Upper,Std Error
 Equal Weight,0.7459,0.2788,1.3258,0.2652
 Rolling MV,0.8153,0.3721,1.3471,0.2413
 Static MV,0.8473,0.4125,1.3817,0.2469
-Kalman MV,0.8104,0.3815,1.3711,0.2504
+Kalman MV,0.8283,0.3887,1.3708,0.2488
