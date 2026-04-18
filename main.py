@@ -68,6 +68,8 @@ def main():
 
     # Sync config
     config.Q_REGIME_ALPHAS = regime_alphas
+    
+    turnover_gamma = 0.00005  # starting value, tune later
 
     # Build filter for plotting purposes
     kf_for_plot = build_filter_from_training(train, q_scale=q_best)
@@ -78,14 +80,15 @@ def main():
 
     strategies = [
         ("Equal Weight", equal_weight_strategy),
-        ("Rolling MV",   make_rolling_mv_strategy()),
+        ("Rolling MV",   make_rolling_mv_strategy(turnover_gamma=turnover_gamma)),
         ("Static MV",    make_static_mv_strategy(train)),
         ("Kalman MV",    make_kalman_strategy(
                             train,
                             q_scale=q_best,
                             regime_labels=regime_labels,
                             regime_alphas=regime_alphas,
-                         )),
+                            turnover_gamma=turnover_gamma,
+                        )),
     ]
 
     # Full period (train + test)
@@ -215,16 +218,11 @@ def main():
 
     from cost_analysis import run_sensitivity, plot_sensitivity, print_sharpe_pivot
 
-    try:
-        df_costs_full = run_sensitivity(
-            returns, train, period_label="Full",
-            regime_labels=regime_labels, regime_alphas=regime_alphas,
-        )
-        print(df_costs_full.columns.tolist())
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-
+    df_costs_full = run_sensitivity(
+        returns, train, period_label="Full",
+        regime_labels=regime_labels, regime_alphas=regime_alphas,
+        turnover_gamma=turnover_gamma,
+    )
     print_sharpe_pivot(df_costs_full, "Full")
     df_costs_full.to_csv(f"{RESULTS_DIR}/cost_sensitivity.csv", index=False)
     plot_sensitivity(df_costs_full, period_label="Full", filename="cost_sensitivity_full.png")
@@ -232,10 +230,12 @@ def main():
     df_costs_oos = run_sensitivity(
         test, train, period_label="OOS",
         regime_labels=regime_labels, regime_alphas=regime_alphas,
+        turnover_gamma=turnover_gamma,
     )
     print_sharpe_pivot(df_costs_oos, "OOS")
     df_costs_oos.to_csv(f"{RESULTS_DIR}/cost_sensitivity_oos.csv", index=False)
     plot_sensitivity(df_costs_oos, period_label="OOS", filename="cost_sensitivity_oos.png")
+
     print("\n=== ALL DONE ===")
     print(f"Results: ./{RESULTS_DIR}/")
     print(f"Plots:   ./{PLOTS_DIR}/")

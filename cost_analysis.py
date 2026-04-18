@@ -29,10 +29,12 @@ COST_LEVELS_BPS = [0, 5, 10, 20]
 
 
 def annualized_metrics(daily_returns: pd.Series) -> dict:
-    ann_ret = daily_returns.mean() * 252
+    cumulative = (1 + daily_returns).cumprod()
+    total_return = cumulative.iloc[-1] / cumulative.iloc[0]
+    n_years = len(daily_returns) / 252
+    ann_ret = total_return ** (1 / n_years) - 1          # CAGR — matches evaluation.py
     ann_vol = daily_returns.std() * np.sqrt(252)
     sharpe  = ann_ret / ann_vol if ann_vol > 0 else 0.0
-    cumulative  = (1 + daily_returns).cumprod()
     max_dd  = ((cumulative - cumulative.cummax()) / cumulative.cummax()).min()
     return {
         "Ann. Return (%)": round(ann_ret * 100, 2),
@@ -48,23 +50,30 @@ def run_sensitivity(
     period_label: str = "Full",
     regime_labels: pd.Series = None,
     regime_alphas: dict = None,
+    turnover_gamma: float = 0.0,
 ) -> pd.DataFrame:
     rows = []
 
     for bps in COST_LEVELS_BPS:
         strategies = [
-            ("Equal Weight", equal_weight_strategy,          0.0),
-            ("Rolling MV",   make_rolling_mv_strategy(),     bps),
-            ("Static MV",    make_static_mv_strategy(train), 0.0),
+            ("Equal Weight", equal_weight_strategy,                           0.0),
+            ("Rolling MV",   make_rolling_mv_strategy(
+                                turnover_gamma=turnover_gamma),               bps),
+            ("Static MV",    make_static_mv_strategy(train),                  0.0),
             ("Kalman MV",    make_kalman_strategy(
                                 train,
                                 q_scale=config.Q_SCALE,
                                 regime_labels=regime_labels,
                                 regime_alphas=regime_alphas,
-                             ), bps),
+                                turnover_gamma=turnover_gamma,
+                             ),                                               bps),
         ]
 
         for name, strat_func, effective_bps in strategies:
+            if name == "Kalman MV" and period_label == "OOS":
+                for i in range(len(train)):
+                    strat_func(train.index[i], train.iloc[:i+1])
+
             result = run_backtest(returns, strat_func, name=name, cost_bps=effective_bps)
             m = annualized_metrics(result["daily_returns"])
             avg_turnover = result["turnover_series"].mean() if len(result["turnover_series"]) > 0 else 0.0
@@ -134,14 +143,14 @@ if __name__ == "__main__":
     returns = compute_returns(prices)
     train, test = split_data(returns)
 
-    # ── Full period ──────────────────────────────────────────────
+    # Full period
     print("\n=== Full Period ===")
     df_full = run_sensitivity(returns, train, period_label="Full")
     print_sharpe_pivot(df_full, "Full")
     df_full.to_csv(f"{RESULTS_DIR}/cost_sensitivity.csv", index=False)
     plot_sensitivity(df_full, period_label="Full", filename="cost_sensitivity_full.png")
 
-    # ── OOS test period ──────────────────────────────────────────
+    # OOS test period
     print("\n=== OOS Test Period ===")
     df_oos = run_sensitivity(test, train, period_label="OOS")
     print_sharpe_pivot(df_oos, "OOS")

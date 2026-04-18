@@ -30,21 +30,23 @@ def equal_weight_strategy(date, returns_so_far):
 
 # 2. Rolling Mean-Variance 
 
-def make_rolling_mv_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW):
-    """
-    Factory: creates a rolling mean-variance strategy.
-    Uses rolling sample mean and rolling sample covariance.
-    """
+def make_rolling_mv_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW, turnover_gamma=0.0):
+    n_assets = [None]
+    w_prev = [None]
+
     def strategy(date, returns_so_far):
         if len(returns_so_far) < cov_window:
             n = returns_so_far.shape[1]
-            return np.ones(n) / n
+            w_prev[0] = np.ones(n) / n
+            return w_prev[0]
 
         recent = returns_so_far.iloc[-cov_window:]
         mu = recent.mean().values
         sigma = recent.cov().values
 
-        return optimize_portfolio(mu, sigma)
+        w = optimize_portfolio(mu, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
+        w_prev[0] = w.copy()
+        return w
 
     return strategy
 
@@ -74,15 +76,15 @@ def make_kalman_strategy(
     cov_window: int = COV_WINDOW,
     regime_labels: pd.Series = None,
     regime_alphas: dict = None,
+    turnover_gamma: float = 0.0,       # add this
 ):
     n_assets = train_returns.shape[1]
-
     R = train_returns.cov().values
     kf = KalmanReturnFilter(n_assets=n_assets, q_scale=q_scale, R=R)
     mu_0 = train_returns.mean().values
     kf.initialize(mu_0=mu_0)
-
     last_processed_idx = 0
+    w_prev = [None]                    # add this
 
     def strategy(date, returns_so_far):
         nonlocal last_processed_idx
@@ -104,16 +106,18 @@ def make_kalman_strategy(
             kf.update(r_t)
 
         last_processed_idx = current_len
-
         mu_kf = kf.mu_hat.copy()
 
         if current_len < cov_window:
             n = returns_so_far.shape[1]
-            return np.ones(n) / n
+            w_prev[0] = np.ones(n) / n
+            return w_prev[0]
 
         recent = returns_so_far.iloc[-cov_window:]
         sigma = recent.cov().values
 
-        return optimize_portfolio(mu_kf, sigma)
+        w = optimize_portfolio(mu_kf, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
+        w_prev[0] = w.copy()           # add this
+        return w
 
     return strategy

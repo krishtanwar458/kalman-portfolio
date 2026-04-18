@@ -3,6 +3,6 @@ EFA,-3.0626,0.0011,-1.34e-06,4053,Reject H0 at 5%: Kalman Filter has significant
 GLD,0.1742,0.5691,4e-08,4053,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
 QQQ,-2.9058,0.0018,-1.05e-06,4053,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
 SPY,-2.6219,0.0044,-8e-07,4053,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-TLT,1.108,0.8661,2e-07,4053,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+TLT,1.1079,0.8661,2e-07,4053,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
 VNQ,-2.0649,0.0195,-8.2e-07,4053,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-OVERALL,-4.5079,0.0,-6.2e-07,4053,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
+OVERALL,-4.508,0.0,-6.2e-07,4053,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
