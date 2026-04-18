@@ -77,7 +77,7 @@ def split_data(
     return train, test
 
 
-# ─── Quick test ───────────────────────────────────────────────────
+# Quick test
 if __name__ == "__main__":
     prices = load_prices()
     returns = compute_returns(prices)

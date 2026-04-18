@@ -28,9 +28,7 @@ import numpy as np
 import pandas as pd
 
 
-# ─────────────────────────────────────────────────────────────
 # Regime classification
-# ─────────────────────────────────────────────────────────────
 
 def compute_realized_volatility(
     returns: pd.DataFrame,
@@ -130,9 +128,7 @@ def regime_summary(regimes: pd.Series) -> pd.DataFrame:
     return df.sort_index()
 
 
-# ─────────────────────────────────────────────────────────────
 # Regime-conditional performance
-# ─────────────────────────────────────────────────────────────
 
 def regime_conditional_performance(
     results: list[dict],

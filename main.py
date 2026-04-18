@@ -5,6 +5,8 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 
+import yfinance as yf
+import numpy as np
 from config import TICKERS, REGIMES, RESULTS_DIR, PLOTS_DIR, Q_SCALE
 from data_loader import load_prices, compute_returns, split_data
 from kalman_filter import build_filter_from_training
@@ -23,6 +25,15 @@ from plots import (
     plot_filtered_vs_rolling_mu,
 )
 
+
+tickers = ["SPY", "QQQ", "TLT", "GLD", "EFA", "VNQ"]
+prices = yf.download(tickers, start="2010-01-01", end="2026-03-31")["Close"]
+returns = np.log(prices / prices.shift(1)).dropna()
+
+for ticker in tickers:
+    ann_ret = returns[ticker].mean() * 252
+    ann_vol = returns[ticker].std() * np.sqrt(252)
+    print(f"{ticker}: Return={ann_ret:.2%}, Vol={ann_vol:.2%}")
 
 def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)

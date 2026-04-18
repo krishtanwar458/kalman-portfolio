@@ -184,7 +184,7 @@ def build_filter_from_training(train_returns: pd.DataFrame, q_scale: float = Q_S
     return kf
 
 
-# ─── Quick test ───────────────────────────────────────────────────
+# Quick test
 if __name__ == "__main__":
     from data_loader import load_prices, compute_returns, split_data
 

@@ -40,7 +40,7 @@ def rolling_covariance(
     return cov_dict
 
 
-# ─── Quick test ───────────────────────────────────────────────────
+# Quick test
 if __name__ == "__main__":
     from data_loader import load_prices, compute_returns
 

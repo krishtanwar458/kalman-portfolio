@@ -33,9 +33,7 @@ import pandas as pd
 from scipy import stats
 
 
-# ─────────────────────────────────────────────────────────────
 # 1. Diebold-Mariano Test
-# ─────────────────────────────────────────────────────────────
 
 def _newey_west_variance(d: np.ndarray, max_lag: int = None) -> float:
     """
@@ -184,9 +182,7 @@ def compute_forecast_errors(
     return errors_kf.dropna(), errors_roll.dropna()
 
 
-# ─────────────────────────────────────────────────────────────
 # 2. Block Bootstrap Sharpe Ratio Confidence Intervals
-# ─────────────────────────────────────────────────────────────
 
 def block_bootstrap_sharpe(
     daily_returns: pd.Series,

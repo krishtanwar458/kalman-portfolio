@@ -34,14 +34,6 @@ def plot_sharpe_confidence_intervals(
 ):
     """
     Forest plot of Sharpe ratios with confidence intervals.
-
-    Each strategy gets a point (observed Sharpe) with error bars (95% CI).
-    Non-overlapping CIs between Kalman MV and Rolling MV is the key result.
-
-    Parameters
-    ----------
-    sharpe_ci_df : DataFrame from bootstrap_sharpe_comparison()
-                   columns: Sharpe, 95% CI Lower, 95% CI Upper, Std Error
     """
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -52,7 +44,6 @@ def plot_sharpe_confidence_intervals(
         row = sharpe_ci_df.loc[strat]
         color = COLORS.get(strat, "#607D8B")
 
-        # Error bar: CI lower to upper, point at observed Sharpe
         ax.errorbar(
             x=row["Sharpe"],
             y=i,
@@ -69,13 +60,19 @@ def plot_sharpe_confidence_intervals(
             zorder=3,
         )
 
-        # Annotate with Sharpe value
+        # Bottom strategy: label above point to avoid x-axis overlap
+        # All others: label below point
+        if i == 0:
+            y_text, va = i + 0.18, "bottom"
+        else:
+            y_text, va = i - 0.18, "top"
+
         ax.text(
             row["Sharpe"],
-            i + 0.18,
+            y_text,
             f"{row['Sharpe']:.3f}",
             ha="center",
-            va="bottom",
+            va=va,
             fontsize=9,
             color=color,
         )
@@ -84,22 +81,21 @@ def plot_sharpe_confidence_intervals(
     ax.set_yticks(y_pos)
     ax.set_yticklabels(strategies, fontsize=11)
     ax.set_xlabel("Annualized Sharpe Ratio", fontsize=12)
-    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.grid(axis="x", alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     if save:
         path = os.path.join(PLOTS_DIR, "sharpe_confidence_intervals.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved: {path}")
-    plt.show()
     plt.close()
 
 
 # ─────────────────────────────────────────────────────────────
-# Figure 2: Regime-conditional Sharpe heatmap
+# Figure 2: Regime-conditional Sharpe bar chart
 # ─────────────────────────────────────────────────────────────
 
 def plot_regime_performance(
@@ -109,17 +105,7 @@ def plot_regime_performance(
 ):
     """
     Grouped bar chart: x-axis = regimes, bars = strategies.
-
-    This is the central figure for the regime analysis section.
-    It visually shows whether Kalman MV advantage increases
-    in higher-stress regimes.
-
-    Parameters
-    ----------
-    regime_sharpe_df : DataFrame from regime_sharpe_table()
-                       rows = regimes, columns = strategies + N Days
     """
-    # Drop N Days column for plotting
     plot_df = regime_sharpe_df.drop(columns=["N Days"], errors="ignore")
     strategies = [c for c in plot_df.columns if c in COLORS]
     regimes = plot_df.index.tolist()
@@ -145,10 +131,9 @@ def plot_regime_performance(
             linewidth=0.5,
         )
 
-        # Label bars with value
         for bar, val in zip(bars, values):
             if not np.isnan(val):
-                ypos = bar.get_height() + (0.02 if val >= 0 else -0.08)
+                ypos = bar.get_height() + 0.03
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
                     ypos,
@@ -162,31 +147,33 @@ def plot_regime_performance(
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
     ax.set_xticks(x)
 
-    # Add N Days to x-tick labels
     xlabels = []
     for regime in regimes:
         n_days = int(regime_sharpe_df.loc[regime, "N Days"]) if "N Days" in regime_sharpe_df.columns else ""
         xlabels.append(f"{regime}\n(n={n_days}d)")
     ax.set_xticklabels(xlabels, fontsize=11)
 
+    # Add headroom above tallest bar so labels don't collide with title
+    current_top = ax.get_ylim()[1]
+    ax.set_ylim(top=current_top * 1.18)
+
     ax.set_ylabel("Annualized Sharpe Ratio", fontsize=12)
-    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.legend(fontsize=10, loc="upper right")
     ax.grid(axis="y", alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     if save:
         path = os.path.join(PLOTS_DIR, "regime_sharpe_comparison.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved: {path}")
-    plt.show()
     plt.close()
 
 
 # ─────────────────────────────────────────────────────────────
-# Figure 3: Kalman advantage by regime (the key narrative chart)
+# Figure 3: Kalman advantage by regime
 # ─────────────────────────────────────────────────────────────
 
 def plot_kalman_advantage_by_regime(
@@ -196,13 +183,6 @@ def plot_kalman_advantage_by_regime(
 ):
     """
     Bar chart showing Kalman MV Sharpe MINUS Rolling MV Sharpe per regime.
-
-    This is the paper's money chart. If Kalman advantage is positive
-    and increases from LOW_VOL to CRISIS, the hypothesis is confirmed.
-
-    Parameters
-    ----------
-    advantage_df : DataFrame from kalman_outperformance_by_regime()
     """
     regimes = advantage_df.index.tolist()
     advantage = advantage_df["Kalman Advantage"].values
@@ -211,41 +191,60 @@ def plot_kalman_advantage_by_regime(
 
     fig, ax = plt.subplots(figsize=(9, 5))
 
-    bars = ax.bar(regimes, advantage, color=colors, alpha=0.85, edgecolor="white", linewidth=0.8, width=0.5)
+    bars = ax.bar(regimes, advantage, color=colors, alpha=0.85,
+                  edgecolor="white", linewidth=0.8, width=0.5)
 
     for bar, val in zip(bars, advantage):
         if not np.isnan(val):
-            ypos = bar.get_height() + (0.01 if val >= 0 else -0.05)
+            if abs(val) > 0.02:
+                # Large enough — center label inside bar with white text
+                ypos = bar.get_height() / 2
+                va = "center"
+                text_color = "white"
+            elif val >= 0:
+                # Small positive — label above bar
+                ypos = bar.get_height() + 0.008
+                va = "bottom"
+                text_color = "black"
+            else:
+                # Small negative — label below bar
+                ypos = bar.get_height() - 0.008
+                va = "top"
+                text_color = "black"
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
                 ypos,
                 f"{val:+.3f}",
                 ha="center",
-                va="bottom",
+                va=va,
                 fontsize=10,
                 fontweight="bold",
+                color=text_color,
             )
 
     ax.axhline(0, color="black", linewidth=1, linestyle="--", alpha=0.7)
     ax.set_ylabel("Sharpe Advantage (Kalman MV − Rolling MV)", fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.set_xlabel("Market Regime (by realized volatility)", fontsize=11)
     ax.grid(axis="y", alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # Add regime day counts
+    # Add headroom so bar labels don't clip into title
+    ymin, ymax = ax.get_ylim()
+    ax.set_ylim(ymin, ymax * 1.20)
+
+    # Add regime day counts at the bottom
     if "N Days" in advantage_df.columns:
         for i, (regime, row) in enumerate(advantage_df.iterrows()):
-            ax.text(i, ax.get_ylim()[0] * 0.85, f"n={int(row['N Days'])}d",
+            ax.text(i, ymin * 0.85, f"n={int(row['N Days'])}d",
                     ha="center", fontsize=8, color="grey")
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     if save:
         path = os.path.join(PLOTS_DIR, "kalman_advantage_by_regime.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved: {path}")
-    plt.show()
     plt.close()
 
 
@@ -261,14 +260,6 @@ def plot_realized_volatility_with_regimes(
 ):
     """
     Line chart of realized vol with background shading by regime.
-
-    This goes in the data/methodology section to show how regimes
-    are defined and where they fall in the sample period.
-
-    Parameters
-    ----------
-    vol     : Series of realized volatility from compute_realized_volatility()
-    regimes : Series of regime labels from classify_regimes()
     """
     fig, ax = plt.subplots(figsize=(14, 5))
 
@@ -276,7 +267,6 @@ def plot_realized_volatility_with_regimes(
     vol_plot = vol.loc[common_idx]
     reg_plot = regimes.loc[common_idx]
 
-    # Shade background by regime
     prev_regime = None
     start_date = None
     for date, regime in reg_plot.items():
@@ -287,41 +277,37 @@ def plot_realized_volatility_with_regimes(
             start_date = date
             prev_regime = regime
 
-    # Shade last segment
     if prev_regime is not None and start_date is not None:
         ax.axvspan(start_date, reg_plot.index[-1], alpha=0.12,
                    color=REGIME_COLORS.get(prev_regime, "#ccc"), linewidth=0)
 
-    # Vol line
     ax.plot(vol_plot.index, vol_plot.values, color="#1565C0", linewidth=1.2,
             alpha=0.85, label="Realized Vol (annualized)")
 
-    # Mean and ±2 std lines
     vol_mean = vol_plot.mean()
     vol_std = vol_plot.std()
-    ax.axhline(vol_mean, color="grey", linestyle="--", linewidth=0.8, alpha=0.6, label=f"Mean ({vol_mean:.1%})")
+    ax.axhline(vol_mean, color="grey", linestyle="--", linewidth=0.8,
+               alpha=0.6, label=f"Mean ({vol_mean:.1%})")
     ax.axhline(vol_mean + 2 * vol_std, color="#7B1FA2", linestyle=":", linewidth=1,
                alpha=0.7, label=f"Crisis threshold (+2σ = {vol_mean + 2*vol_std:.1%})")
 
-    # Legend for regime colors
     patches = [mpatches.Patch(color=REGIME_COLORS[r], alpha=0.4, label=r)
                for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"] if r in reg_plot.values]
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles=handles + patches, fontsize=9, loc="upper right", ncol=2)
 
     ax.set_ylabel("Annualized Realized Volatility", fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
     ax.grid(alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     if save:
         path = os.path.join(PLOTS_DIR, "realized_volatility_regimes.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved: {path}")
-    plt.show()
     plt.close()
 
 
@@ -338,15 +324,6 @@ def plot_forecast_error_comparison(
 ):
     """
     Rolling RMSE comparison between Kalman and rolling-window forecasts.
-
-    This is the companion figure to the Diebold-Mariano test — it shows
-    visually when and where the Kalman filter achieves lower forecast error.
-
-    Parameters
-    ----------
-    errors_kalman  : forecast errors DataFrame from compute_forecast_errors()
-    errors_rolling : forecast errors DataFrame from compute_forecast_errors()
-    asset          : which asset column to plot
     """
     if asset not in errors_kalman.columns:
         asset = errors_kalman.columns[0]
@@ -367,7 +344,6 @@ def plot_forecast_error_comparison(
     ax.plot(common, rmse_roll.loc[common], color=COLORS["Rolling MV"], linewidth=1.2,
             alpha=0.9, label="Rolling Mean RMSE", linestyle="--")
 
-    # Shade when Kalman is better
     diff = rmse_kf.loc[common] - rmse_roll.loc[common]
     ax.fill_between(common, 0, 1, where=diff < 0,
                     transform=ax.get_xaxis_transform(),
@@ -375,16 +351,15 @@ def plot_forecast_error_comparison(
                     label="Kalman lower error")
 
     ax.set_ylabel("Rolling RMSE (60-day)", fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     if save:
         path = os.path.join(PLOTS_DIR, f"forecast_error_{asset}.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved: {path}")
-    plt.show()
     plt.close()

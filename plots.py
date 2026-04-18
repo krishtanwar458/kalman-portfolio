@@ -42,11 +42,11 @@ def plot_cumulative_returns(results: list[dict], title: str = "Cumulative Return
         ax.axvspan(pd.Timestamp(start), pd.Timestamp(end),
                    alpha=0.15, color=colors[i % len(colors)], label=regime_name)
 
-    ax.set_title(title)
+    ax.set_title(title, pad=12)
     ax.set_ylabel("Cumulative Wealth ($1 invested)")
     ax.legend(loc="upper left", fontsize=9)
-    fig.tight_layout()
-    fig.savefig(f"{PLOTS_DIR}/cumulative_returns.png", dpi=150)
+    fig.tight_layout(pad=1.5)
+    fig.savefig(f"{PLOTS_DIR}/cumulative_returns.png", dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved {PLOTS_DIR}/cumulative_returns.png")
 
@@ -60,11 +60,11 @@ def plot_drawdowns(results: list[dict], title: str = "Drawdowns"):
         drawdown = (cum - cum.cummax()) / cum.cummax()
         ax.plot(drawdown, label=r["name"], linewidth=1.2)
 
-    ax.set_title(title)
+    ax.set_title(title, pad=12)
     ax.set_ylabel("Drawdown")
     ax.legend(loc="lower left", fontsize=9)
-    fig.tight_layout()
-    fig.savefig(f"{PLOTS_DIR}/drawdowns.png", dpi=150)
+    fig.tight_layout(pad=1.5)
+    fig.savefig(f"{PLOTS_DIR}/drawdowns.png", dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved {PLOTS_DIR}/drawdowns.png")
 
@@ -78,14 +78,14 @@ def plot_weights_over_time(result: dict, title: str = None):
     name = result["name"]
     fig, ax = plt.subplots()
     ax.stackplot(weights.index, weights.values.T, labels=weights.columns, alpha=0.8)
-    ax.set_title(title or f"Portfolio Weights — {name}")
+    ax.set_title(title or f"Portfolio Weights — {name}", pad=12)
     ax.set_ylabel("Weight")
     ax.set_ylim(0, 1)
     ax.legend(loc="upper right", fontsize=8, ncol=3)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.5)
 
     safe_name = name.lower().replace(" ", "_").replace("-", "_")
-    fig.savefig(f"{PLOTS_DIR}/weights_{safe_name}.png", dpi=150)
+    fig.savefig(f"{PLOTS_DIR}/weights_{safe_name}.png", dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved {PLOTS_DIR}/weights_{safe_name}.png")
 
@@ -122,10 +122,10 @@ def plot_filtered_vs_rolling_mu(
             label=f"Rolling {window}-day mean")
 
     ax.axhline(0, color="gray", linewidth=0.5, linestyle="--")
-    ax.set_title(f"Expected Return Estimate — {asset}")
+    ax.set_title(f"Expected Return Estimate — {asset}", pad=12)
     ax.set_ylabel("Annualized Expected Return")
     ax.legend(fontsize=9)
-    fig.tight_layout()
-    fig.savefig(f"{PLOTS_DIR}/filtered_vs_rolling_{asset}.png", dpi=150)
+    fig.tight_layout(pad=1.5)
+    fig.savefig(f"{PLOTS_DIR}/filtered_vs_rolling_{asset}.png", dpi=150, bbox_inches="tight")
     plt.close()
     print(f"  Saved {PLOTS_DIR}/filtered_vs_rolling_{asset}.png")
