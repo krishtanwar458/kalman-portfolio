@@ -24,7 +24,6 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
     """
     daily_ret = result["daily_returns"]
     cumulative = result["cumulative"]
-    weights = result["weights_history"]
 
     # Annualized return
     total_return = cumulative.iloc[-1] / cumulative.iloc[0]
@@ -42,12 +41,9 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
     drawdown = (cumulative - rolling_max) / rolling_max
     max_drawdown = drawdown.min()
 
-    # Turnover (average absolute change in weights per rebalance)
-    if len(weights) > 1:
-        weight_changes = weights.diff().dropna().abs()
-        avg_turnover = weight_changes.sum(axis=1).mean()
-    else:
-        avg_turnover = 0.0
+    # Turnover — use backtest turnover_series for consistency with cost_analysis.py
+    turnover_s = result.get("turnover_series", pd.Series(dtype=float))
+    avg_turnover = turnover_s.mean() if len(turnover_s) > 0 else 0.0
 
     return {
         "Strategy": result["name"],

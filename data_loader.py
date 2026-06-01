@@ -19,8 +19,11 @@ def load_prices(
     Download adjusted close prices for all tickers.
     Returns a DataFrame with dates as index and tickers as columns.
     """
+    # yfinance treats end as exclusive; add one day so TEST_END is included.
+    yf_end = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
     print(f"Downloading {len(tickers)} ETFs from {start} to {end}...")
-    data = yf.download(tickers, start=start, end=end, auto_adjust=True)
+    data = yf.download(tickers, start=start, end=yf_end, auto_adjust=True)
 
     # yfinance returns MultiIndex columns when multiple tickers
     if isinstance(data.columns, pd.MultiIndex):

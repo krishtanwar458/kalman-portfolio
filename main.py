@@ -7,7 +7,7 @@ warnings.filterwarnings("ignore")
 
 import yfinance as yf
 import numpy as np
-from config import TICKERS, REGIMES, RESULTS_DIR, PLOTS_DIR, Q_SCALE
+from config import TICKERS, REGIMES, RESULTS_DIR, PLOTS_DIR, Q_SCALE, TRAIN_START, TEST_END
 from data_loader import load_prices, compute_returns, split_data
 from kalman_filter import build_filter_from_training
 from backtest import run_backtest
@@ -27,7 +27,8 @@ from plots import (
 
 
 tickers = ["SPY", "QQQ", "TLT", "GLD", "EFA", "VNQ"]
-prices = yf.download(tickers, start="2010-01-01", end="2026-03-31")["Close"]
+download_end = (pd.Timestamp(TEST_END) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+prices = yf.download(tickers, start=TRAIN_START, end=download_end)["Close"]
 returns = np.log(prices / prices.shift(1)).dropna()
 
 for ticker in tickers:
