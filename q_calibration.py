@@ -120,7 +120,7 @@ def select_q_cv(
         rows.append({"Q_SCALE": q, "Val_Sharpe": sharpe})
 
     results = pd.DataFrame(rows).set_index("Q_SCALE")
-    best_q  = float(results["Val_Sharpe"].idxmax())   # maximise Sharpe, not minimise RMSE
+    best_q  = float(results["Val_Sharpe"].idxmax())
 
     if verbose:
         print("\n── Q Grid Search Results (training CV, criterion = Sharpe) ──")
@@ -131,6 +131,7 @@ def select_q_cv(
         print(f"\n  Selected Q_SCALE = {best_q:.4e}")
 
     return best_q, results
+
 
 # Regime-specific alpha grid
 ALPHA_GRID = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0]
@@ -181,7 +182,7 @@ def _run_regime_validation(
     for t in range(len(Y_val)):
         date_t = dates_val[t]
 
-        # Look up regime, default to base Q if date not in labels (warmup edge)
+        # Look up regime, default to MED_VOL if date not in labels
         regime_t = regime_labels.get(date_t, "MED_VOL") if hasattr(regime_labels, 'get') \
                    else (regime_labels.loc[date_t] if date_t in regime_labels.index else "MED_VOL")
         Q_t = Q_map.get(regime_t, Q_base)
@@ -228,8 +229,6 @@ def calibrate_regime_alphas(
       2. For each regime in [LOW_VOL, MED_VOL, HIGH_VOL]:
            Grid search alpha for this regime, holding others fixed at current best.
            Keep whichever alpha maximises validation Sharpe.
-    This avoids a full 3D grid search (6^3 = 216 combinations) while still
-    finding a good joint solution.
 
     Returns
     -------
@@ -257,7 +256,6 @@ def calibrate_regime_alphas(
     for regime in REGIMES_TO_TUNE:
         rows = []
         for alpha in alpha_grid:
-            # Hold all other regimes fixed, try this alpha for current regime
             trial_alphas = {**current_alphas, regime: alpha}
             sharpe = _run_regime_validation(
                 Y_warm, Y_val, dates_val, regime_labels, R, Q_base, trial_alphas
@@ -284,6 +282,7 @@ def calibrate_regime_alphas(
             print(f"  {regime:<12} alpha = {alpha:.3f}  {tag}")
 
     return current_alphas, all_results
+
 
 def plot_q_selection(results: pd.DataFrame, best_q: float,
                      save_path: str = "plots/q_selection.png"):

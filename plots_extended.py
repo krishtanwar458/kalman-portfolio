@@ -13,6 +13,7 @@ COLORS = {
     "Rolling MV": "#FF5722",   # red-orange
     "Static MV":  "#9E9E9E",   # grey
     "Equal Weight": "#4CAF50", # green
+    "Ledoit-Wolf MV": "#00BCD4",  # cyan
 }
 
 REGIME_COLORS = {

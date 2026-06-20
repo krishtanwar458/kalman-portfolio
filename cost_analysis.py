@@ -23,9 +23,12 @@ from benchmarks import (
     make_rolling_mv_strategy,
     make_static_mv_strategy,
     make_kalman_strategy,
+    make_ledoit_wolf_strategy,
 )
 
 COST_LEVELS_BPS = [0, 5, 10, 20]
+
+STRATEGY_ORDER = ["Equal Weight", "Rolling MV", "Static MV", "Ledoit-Wolf MV", "Kalman MV"]
 
 
 def annualized_metrics(daily_returns: pd.Series) -> dict:
@@ -60,6 +63,8 @@ def run_sensitivity(
             ("Rolling MV",   make_rolling_mv_strategy(
                                 turnover_gamma=turnover_gamma),               bps),
             ("Static MV",    make_static_mv_strategy(train),                  0.0),
+            ("Ledoit-Wolf MV", make_ledoit_wolf_strategy(
+                                turnover_gamma=turnover_gamma),               bps),
             ("Kalman MV",    make_kalman_strategy(
                                 train,
                                 q_scale=config.Q_SCALE,
@@ -88,11 +93,10 @@ def run_sensitivity(
     return pd.DataFrame(rows)
 
 def print_sharpe_pivot(df: pd.DataFrame, period_label: str = ""):
-    order = ["Equal Weight", "Rolling MV", "Static MV", "Kalman MV"]
-    pivot = df.pivot_table(index="Strategy", columns="Cost (bps)", values="Sharpe").reindex(order)
+    pivot = df.pivot_table(index="Strategy", columns="Cost (bps)", values="Sharpe").reindex(STRATEGY_ORDER)
     print(f"\n── Sharpe Ratio by Strategy and Cost [{period_label}] ──")
     print(pivot.to_string())
-    pivot_ret = df.pivot_table(index="Strategy", columns="Cost (bps)", values="Ann. Return (%)").reindex(order)
+    pivot_ret = df.pivot_table(index="Strategy", columns="Cost (bps)", values="Ann. Return (%)").reindex(STRATEGY_ORDER)
     print(f"\n── Ann. Return (%) by Strategy and Cost [{period_label}] ──")
     print(pivot_ret.to_string())
 
@@ -102,11 +106,13 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     colors  = {"Equal Weight": "#2ca02c", "Rolling MV": "#ff7f0e",
-                "Static MV": "#7f7f7f",   "Kalman MV":  "#1f77b4"}
+                "Static MV": "#7f7f7f", "Ledoit-Wolf MV": "#9467bd",
+                "Kalman MV":  "#1f77b4"}
     markers = {"Equal Weight": "o", "Rolling MV": "s",
-                "Static MV": "D", "Kalman MV": "^"}
+                "Static MV": "D", "Ledoit-Wolf MV": "v",
+                "Kalman MV": "^"}
 
-    for strat in ["Equal Weight", "Rolling MV", "Static MV", "Kalman MV"]:
+    for strat in STRATEGY_ORDER:
         sub = df[df["Strategy"] == strat]
         axes[0].plot(sub["Cost (bps)"], sub["Sharpe"],
                      label=strat, color=colors[strat],

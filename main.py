@@ -16,6 +16,7 @@ from benchmarks import (
     make_rolling_mv_strategy,
     make_static_mv_strategy,
     make_kalman_strategy,
+    make_ledoit_wolf_strategy,
 )
 from evaluation import compare_strategies, regime_analysis, print_metrics
 from plots import (
@@ -68,7 +69,8 @@ def main():
     config.Q_SCALE = q_best
 
     # Compute regime labels on full returns (no lookahead — uses past vol only)
-    regime_labels = classify_regimes(returns, window=21, crisis_threshold=2.0)
+    regime_labels = classify_regimes(returns, window=21, crisis_threshold=2.0,
+                                  reference_returns=train)
 
     # Calibrate per-regime alphas using training regime labels only
     # CRISIS is fixed at base Q (alpha=1.0) — too few days to calibrate reliably
@@ -94,6 +96,7 @@ def main():
         ("Equal Weight", equal_weight_strategy),
         ("Rolling MV",   make_rolling_mv_strategy(turnover_gamma=turnover_gamma)),
         ("Static MV",    make_static_mv_strategy(train)),
+        ("Ledoit-Wolf MV", make_ledoit_wolf_strategy(turnover_gamma=turnover_gamma)),  # add this
         ("Kalman MV",    make_kalman_strategy(
                             train,
                             q_scale=q_best,
@@ -224,6 +227,32 @@ def main():
             stat_results["forecast_errors"]["rolling"],
             asset=asset,
         )
+
+    # Diagnostic plots for Discussion section
+    from diagnostic_analysis import collect_kalman_gain, collect_covariance_divergence
+    from plots_diagnostic import plot_kalman_gain, plot_covariance_divergence
+
+    print("\n=== STEP 8b: Diagnostic Plots (Discussion Section) ===")
+
+    gain_series = collect_kalman_gain(
+        returns, train,
+        q_scale=q_best,
+        regime_labels=regime_labels,
+        regime_alphas=regime_alphas,
+    )
+
+    divergence_series = collect_covariance_divergence(
+        returns, train,
+        q_scale=q_best,
+        cov_window=60,
+        regime_labels=regime_labels,
+        regime_alphas=regime_alphas,
+    )
+
+    plot_kalman_gain(gain_series, regime_labels)
+    plot_covariance_divergence(divergence_series, regime_labels)
+
+    print("  Diagnostic plots saved.")
 
     # Step 9: Transaction Cost Sensitivity
     print("\n=== STEP 9: Transaction Cost Sensitivity ===")

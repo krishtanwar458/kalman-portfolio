@@ -121,3 +121,26 @@ def make_kalman_strategy(
         return w
 
     return strategy
+
+from sklearn.covariance import LedoitWolf
+
+# 5. Ledoit-Wolf Shrinkage Mean-Variance
+
+def make_ledoit_wolf_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW, turnover_gamma=0.0):
+    w_prev = [None]
+
+    def strategy(date, returns_so_far):
+        if len(returns_so_far) < cov_window:
+            n = returns_so_far.shape[1]
+            w_prev[0] = np.ones(n) / n
+            return w_prev[0]
+
+        recent = returns_so_far.iloc[-cov_window:]
+        mu = recent.mean().values
+        sigma = LedoitWolf().fit(recent.values).covariance_
+
+        w = optimize_portfolio(mu, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
+        w_prev[0] = w.copy()
+        return w
+
+    return strategy

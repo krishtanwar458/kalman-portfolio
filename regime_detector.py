@@ -66,6 +66,7 @@ def classify_regimes(
     returns: pd.DataFrame,
     window: int = 21,
     crisis_threshold: float = 2.0,
+    reference_returns: pd.DataFrame = None,
 ) -> pd.Series:
     """
     Classify each date into a volatility regime.
@@ -82,6 +83,9 @@ def classify_regimes(
     returns          : daily returns DataFrame (T x N)
     window           : rolling vol window in trading days
     crisis_threshold : z-score threshold for crisis regime
+    reference_returns: if provided, percentile thresholds and crisis stats
+                       are computed on this series only (e.g. training data).
+                       This avoids look-ahead bias from the test period.
 
     Returns
     -------
@@ -89,22 +93,25 @@ def classify_regimes(
     """
     vol = compute_realized_volatility(returns, window=window)
 
-    # Compute vol z-score (how many std devs above mean)
-    vol_mean = vol.mean()
-    vol_std = vol.std()
+    # Use reference period for thresholds if provided, otherwise use full series
+    ref_vol = compute_realized_volatility(reference_returns, window=window) \
+              if reference_returns is not None else vol
+
+    # Thresholds computed on reference period only (training data)
+    vol_mean = ref_vol.mean()
+    vol_std  = ref_vol.std()
+    q33      = ref_vol.quantile(0.33)
+    q67      = ref_vol.quantile(0.67)
+
+    # Z-score using reference statistics
     vol_zscore = (vol - vol_mean) / vol_std
 
-    # Tercile thresholds (computed on the full series — no look-ahead
-    # since we're classifying for the paper's retrospective analysis)
-    q33 = vol.quantile(0.33)
-    q67 = vol.quantile(0.67)
-
-    # Assign regimes
+    # Assign regimes to full series using reference thresholds
     regimes = pd.Series(index=vol.index, dtype=str)
-    regimes[vol <= q33] = "LOW_VOL"
-    regimes[(vol > q33) & (vol <= q67)] = "MED_VOL"
-    regimes[vol > q67] = "HIGH_VOL"
-    regimes[vol_zscore > crisis_threshold] = "CRISIS"  # override tercile
+    regimes[vol <= q33]                    = "LOW_VOL"
+    regimes[(vol > q33) & (vol <= q67)]   = "MED_VOL"
+    regimes[vol > q67]                     = "HIGH_VOL"
+    regimes[vol_zscore > crisis_threshold] = "CRISIS"   # override tercile
 
     return regimes
 
@@ -122,8 +129,8 @@ def regime_summary(regimes: pd.Series) -> pd.DataFrame:
     DataFrame with regime name, day count, and percentage
     """
     counts = regimes.value_counts()
-    pct = (counts / len(regimes) * 100).round(1)
-    df = pd.DataFrame({"Days": counts, "Pct (%)": pct})
+    pct    = (counts / len(regimes) * 100).round(1)
+    df     = pd.DataFrame({"Days": counts, "Pct (%)": pct})
     df.index.name = "Regime"
     return df.sort_index()
 
@@ -139,10 +146,6 @@ def regime_conditional_performance(
     """
     Compute performance metrics for each strategy within each regime.
 
-    This is the key analytical table for the paper. It shows whether
-    the Kalman Filter advantage concentrates in high-volatility / crisis
-    periods (which is the theoretical prediction).
-
     Parameters
     ----------
     results      : list of dicts from run_backtest()
@@ -155,8 +158,7 @@ def regime_conditional_performance(
     MultiIndex DataFrame: (Regime, Metric) x Strategy
     """
     regime_labels = regimes.unique()
-    # Sort for consistent display order
-    order = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
+    order         = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
     regime_labels = [r for r in order if r in regime_labels]
 
     rows = []
@@ -164,7 +166,7 @@ def regime_conditional_performance(
         regime_dates = regimes[regimes == regime].index
 
         for result in results:
-            daily_ret = result["daily_returns"]
+            daily_ret  = result["daily_returns"]
             regime_ret = daily_ret.loc[daily_ret.index.intersection(regime_dates)]
 
             if len(regime_ret) < min_days:
@@ -172,30 +174,29 @@ def regime_conditional_performance(
 
             ann_ret = regime_ret.mean() * trading_days
             ann_vol = regime_ret.std() * np.sqrt(trading_days)
-            sharpe = ann_ret / ann_vol if ann_vol > 1e-10 else 0.0
+            sharpe  = ann_ret / ann_vol if ann_vol > 1e-10 else 0.0
 
-            # Max drawdown within this regime
-            cum = (1 + regime_ret).cumprod()
+            cum      = (1 + regime_ret).cumprod()
             roll_max = cum.cummax()
-            max_dd = ((cum - roll_max) / roll_max).min()
+            max_dd   = ((cum - roll_max) / roll_max).min()
 
-            # Win rate vs equal weight (does this strategy beat EW in this regime?)
             ew_result = next((r for r in results if r["name"] == "Equal Weight"), None)
             if ew_result is not None:
-                ew_ret = ew_result["daily_returns"].loc[ew_result["daily_returns"].index.intersection(regime_dates)]
-                common = regime_ret.index.intersection(ew_ret.index)
+                ew_ret   = ew_result["daily_returns"].loc[
+                    ew_result["daily_returns"].index.intersection(regime_dates)]
+                common   = regime_ret.index.intersection(ew_ret.index)
                 win_rate = (regime_ret.loc[common] > ew_ret.loc[common]).mean()
             else:
                 win_rate = np.nan
 
             rows.append({
-                "Regime": regime,
-                "Strategy": result["name"],
-                "N Days": len(regime_ret),
-                "Ann. Return": ann_ret,
-                "Ann. Vol": ann_vol,
-                "Sharpe": sharpe,
-                "Max Drawdown": max_dd,
+                "Regime":              regime,
+                "Strategy":            result["name"],
+                "N Days":              len(regime_ret),
+                "Ann. Return":         ann_ret,
+                "Ann. Vol":            ann_vol,
+                "Sharpe":              sharpe,
+                "Max Drawdown":        max_dd,
                 "Daily Win Rate vs EW": win_rate,
             })
 
@@ -204,10 +205,11 @@ def regime_conditional_performance(
         return df
 
     return df.pivot_table(
-        index="Regime",
-        columns="Strategy",
-        values=["Ann. Return", "Ann. Vol", "Sharpe", "Max Drawdown", "Daily Win Rate vs EW"],
-        aggfunc="first",
+        index   = "Regime",
+        columns = "Strategy",
+        values  = ["Ann. Return", "Ann. Vol", "Sharpe",
+                   "Max Drawdown", "Daily Win Rate vs EW"],
+        aggfunc = "first",
     ).round(4)
 
 
@@ -219,23 +221,22 @@ def regime_sharpe_table(
 ) -> pd.DataFrame:
     """
     Simplified version: just Sharpe ratio per regime per strategy.
-    Easier to read and present in a paper table.
 
     Returns
     -------
     DataFrame: rows = regimes, columns = strategies
     """
     regime_labels = regimes.unique()
-    order = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
+    order         = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
     regime_labels = [r for r in order if r in regime_labels]
 
     rows = []
     for regime in regime_labels:
         regime_dates = regimes[regimes == regime].index
-        row = {"Regime": regime, "N Days": len(regime_dates)}
+        row          = {"Regime": regime, "N Days": len(regime_dates)}
 
         for result in results:
-            daily_ret = result["daily_returns"]
+            daily_ret  = result["daily_returns"]
             regime_ret = daily_ret.loc[daily_ret.index.intersection(regime_dates)]
 
             if len(regime_ret) < min_days:
@@ -243,7 +244,8 @@ def regime_sharpe_table(
             else:
                 ann_ret = regime_ret.mean() * trading_days
                 ann_vol = regime_ret.std() * np.sqrt(trading_days)
-                row[result["name"]] = round(ann_ret / ann_vol, 3) if ann_vol > 1e-10 else 0.0
+                row[result["name"]] = round(ann_ret / ann_vol, 3) \
+                                      if ann_vol > 1e-10 else 0.0
 
         rows.append(row)
 
@@ -260,13 +262,6 @@ def kalman_outperformance_by_regime(
     """
     Compute Kalman MV Sharpe MINUS baseline Sharpe for each regime.
 
-    This directly answers the paper's hypothesis: does Kalman
-    outperformance increase with market stress?
-
-    Parameters
-    ----------
-    baseline : strategy name to compare against (default: "Rolling MV")
-
     Returns
     -------
     DataFrame: regime, baseline Sharpe, Kalman Sharpe, difference
@@ -277,10 +272,10 @@ def kalman_outperformance_by_regime(
         raise ValueError(f"Need 'Kalman MV' and '{baseline}' in results.")
 
     out = pd.DataFrame({
-        "N Days": sharpe_table["N Days"],
+        "N Days":              sharpe_table["N Days"],
         f"{baseline} Sharpe": sharpe_table[baseline],
-        "Kalman MV Sharpe": sharpe_table["Kalman MV"],
-        "Kalman Advantage": sharpe_table["Kalman MV"] - sharpe_table[baseline],
+        "Kalman MV Sharpe":   sharpe_table["Kalman MV"],
+        "Kalman Advantage":   sharpe_table["Kalman MV"] - sharpe_table[baseline],
     })
 
     return out.round(4)
