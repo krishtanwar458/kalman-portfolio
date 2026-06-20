@@ -1,67 +1,43 @@
 """
-q_calibration.py — Walk-forward cross-validation to select Q_SCALE.
+q_calibration.py — Walk-forward cross-validation to select Q_SCALE and regime alphas.
 
-Evaluates a grid of Q values using one-step-ahead forecast RMSE
-on the last 30% of the training period (walk-forward within training).
+UPDATED: validation now scores each candidate using the same mechanism as
+make_kalman_strategy — mu = rolling mean of RAW returns (constant w.r.t. Q),
+sigma = covariance of the FILTERED return series. Previously this scored
+candidates using the filtered mean fed directly to the optimizer against a
+static covariance matrix, which no longer matches production.
+
 No test data is ever touched.
-
-Reference: time-series cross-validation following Hyndman & Athanasopoulos (2018).
 """
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from config import COV_WINDOW, RETURN_WINDOW
 
 
 # Grid of Q values to evaluate
 Q_GRID = [1e-8, 5e-8, 1e-7, 5e-7, 1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3]
 
 
-def _run_kalman(Y: np.ndarray, q: float, R: np.ndarray, mu0: np.ndarray) -> np.ndarray:
-    """
-    Run forward Kalman filter and return one-step-ahead forecast errors.
-    F = H = I (local-level / random-walk model).
-    """
-    T, n = Y.shape
-    Q = q * np.eye(n)
-    P = R.copy()        # diffuse initialisation
-    mu = mu0.copy()
-    errors = np.zeros((T, n))
-
-    for t in range(T):
-        # Predict
-        mu_pred = mu
-        P_pred  = P + Q
-
-        # Innovation (one-step-ahead forecast error)
-        errors[t] = Y[t] - mu_pred
-
-        # Update
-        S = P_pred + R
-        K = P_pred @ np.linalg.solve(S.T, np.eye(n)).T
-        mu = mu_pred + K @ errors[t]
-        P  = (np.eye(n) - K) @ P_pred
-
-    return errors
-
-
 def select_q_cv(
     train_returns: pd.DataFrame,
     q_grid: list = Q_GRID,
     val_fraction: float = 0.30,
+    cov_window: int = COV_WINDOW,
+    ret_window: int = RETURN_WINDOW,
     verbose: bool = True,
 ) -> tuple:
     """
     Select Q_SCALE via walk-forward CV on training data.
-    Criterion: annualized Sharpe of Kalman MV portfolio on validation window.
-    Warmup: first 70% of training. Validation: last 30%.
-    No test data is ever touched.
+    Criterion: annualized Sharpe of Kalman MV portfolio on validation window,
+    using mu = rolling mean of raw returns, sigma = covariance of filtered returns
+    (matches make_kalman_strategy).
     """
     from optimizer import optimize_portfolio
 
     Y    = train_returns.values
     T, n = Y.shape
-    assets = train_returns.columns
 
     split  = int(T * (1 - val_fraction))
     Y_warm = Y[:split]
@@ -74,9 +50,10 @@ def select_q_cv(
     for q in q_grid:
         Q_mat = q * np.eye(n)
 
-        # Warmup pass
+        # Warmup pass — collect filtered history for the cov_window buffer
         P  = R.copy()
         mu = mu0.copy()
+        filtered_warm = np.zeros((len(Y_warm), n))
         for t in range(len(Y_warm)):
             mu_p = mu
             P_p  = P + Q_mat
@@ -84,20 +61,25 @@ def select_q_cv(
             K    = P_p @ np.linalg.solve(S.T, np.eye(n)).T
             mu   = mu_p + K @ (Y_warm[t] - mu_p)
             P    = (np.eye(n) - K) @ P_p
+            filtered_warm[t] = mu
 
-        # Validation pass: run filter + MV optimizer
+        # Validation pass
         mu_val = mu.copy()
         P_val  = P.copy()
+
+        raw_buffer  = list(Y_warm[-ret_window:])
+        filt_buffer = list(filtered_warm[-cov_window:])
 
         port_returns = []
         current_weights = np.ones(n) / n
         rebal_counter = 0
 
         for t in range(len(Y_val)):
-            # Rebalance monthly (~21 trading days)
-            if rebal_counter % 21 == 0:
+            if rebal_counter % 21 == 0 and len(filt_buffer) >= cov_window:
                 try:
-                    w = optimize_portfolio(mu_val, R)
+                    mu_t    = np.mean(raw_buffer[-ret_window:], axis=0)
+                    sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                    w = optimize_portfolio(mu_t, sigma_t)
                     if w is not None and not np.any(np.isnan(w)):
                         current_weights = w
                 except Exception:
@@ -114,6 +96,9 @@ def select_q_cv(
             K      = P_p @ np.linalg.solve(S.T, np.eye(n)).T
             mu_val = mu_p + K @ err
             P_val  = (np.eye(n) - K) @ P_p
+
+            raw_buffer.append(Y_val[t])
+            filt_buffer.append(mu_val.copy())
 
         r = np.array(port_returns)
         sharpe = (r.mean() * 252) / (r.std() * np.sqrt(252)) if r.std() > 0 else 0.0
@@ -146,24 +131,25 @@ def _run_regime_validation(
     R: np.ndarray,
     Q_base: np.ndarray,
     regime_alphas: dict,
+    cov_window: int = COV_WINDOW,
+    ret_window: int = RETURN_WINDOW,
 ) -> float:
     """
     Run one validation pass with a given set of regime alphas.
-    Returns annualized Sharpe on the validation window.
-    regime_alphas: dict mapping regime name -> alpha (e.g. {'LOW_VOL': 0.1, ...})
-    CRISIS always uses 1.0 (base Q).
+    mu = rolling mean of raw returns, sigma = covariance of filtered returns
+    (matches make_kalman_strategy). CRISIS always uses 1.0 (base Q).
     """
     from optimizer import optimize_portfolio
 
     n = Y_warm.shape[1]
 
-    # Build per-regime Q matrices
     Q_map = {regime: regime_alphas.get(regime, 1.0) * Q_base
              for regime in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]}
 
-    # Warmup pass — use base Q throughout (no switching during warmup)
+    # Warmup pass — base Q throughout, collect filtered history
     P = R.copy()
     mu = Y_warm.mean(axis=0)
+    filtered_warm = np.zeros((len(Y_warm), n))
     for t in range(len(Y_warm)):
         mu_p = mu
         P_p = P + Q_base
@@ -171,26 +157,28 @@ def _run_regime_validation(
         K = P_p @ np.linalg.solve(S.T, np.eye(n)).T
         mu = mu_p + K @ (Y_warm[t] - mu_p)
         P = (np.eye(n) - K) @ P_p
+        filtered_warm[t] = mu
 
     # Validation pass — regime-switching Q
     mu_val = mu.copy()
     P_val = P.copy()
+    raw_buffer  = list(Y_warm[-ret_window:])
+    filt_buffer = list(filtered_warm[-cov_window:])
     port_returns = []
     current_weights = np.ones(n) / n
     rebal_counter = 0
 
     for t in range(len(Y_val)):
         date_t = dates_val[t]
-
-        # Look up regime, default to MED_VOL if date not in labels
         regime_t = regime_labels.get(date_t, "MED_VOL") if hasattr(regime_labels, 'get') \
                    else (regime_labels.loc[date_t] if date_t in regime_labels.index else "MED_VOL")
         Q_t = Q_map.get(regime_t, Q_base)
 
-        # Monthly rebalance
-        if rebal_counter % 21 == 0:
+        if rebal_counter % 21 == 0 and len(filt_buffer) >= cov_window:
             try:
-                w = optimize_portfolio(mu_val, R)
+                mu_t    = np.mean(raw_buffer[-ret_window:], axis=0)
+                sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                w = optimize_portfolio(mu_t, sigma_t)
                 if w is not None and not np.any(np.isnan(w)):
                     current_weights = w
             except Exception:
@@ -208,6 +196,9 @@ def _run_regime_validation(
         mu_val = mu_p + K @ err
         P_val = (np.eye(n) - K) @ P_p
 
+        raw_buffer.append(Y_val[t])
+        filt_buffer.append(mu_val.copy())
+
     r = np.array(port_returns)
     return (r.mean() * 252) / (r.std() * np.sqrt(252)) if r.std() > 0 else 0.0
 
@@ -223,17 +214,8 @@ def calibrate_regime_alphas(
     """
     Calibrate per-regime Q attenuation factors for LOW_VOL, MED_VOL, HIGH_VOL.
     CRISIS is always fixed at base Q (alpha = 1.0) — too few days to calibrate.
-
-    Strategy: sequential greedy search.
-      1. Start with all alphas = 1.0 (base Q everywhere).
-      2. For each regime in [LOW_VOL, MED_VOL, HIGH_VOL]:
-           Grid search alpha for this regime, holding others fixed at current best.
-           Keep whichever alpha maximises validation Sharpe.
-
-    Returns
-    -------
-    best_alphas : dict  e.g. {'LOW_VOL': 0.2, 'MED_VOL': 1.0, 'HIGH_VOL': 0.05, 'CRISIS': 1.0}
-    all_results : dict of DataFrames, one per regime
+    Greedy sequential search, same as before; scoring mechanism updated to
+    match make_kalman_strategy (see _run_regime_validation).
     """
     Y = train_returns.values
     T, n = Y.shape
@@ -246,7 +228,6 @@ def calibrate_regime_alphas(
     R = np.cov(Y.T) + np.eye(n) * 1e-6
     Q_base = q_best * np.eye(n)
 
-    # Start: all regimes at base Q
     current_alphas = {r: 1.0 for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]}
     all_results = {}
 

@@ -74,9 +74,10 @@ def make_kalman_strategy(
     train_returns: pd.DataFrame,
     q_scale: float = Q_SCALE,
     cov_window: int = COV_WINDOW,
+    ret_window: int = RETURN_WINDOW,
     regime_labels: pd.Series = None,
     regime_alphas: dict = None,
-    turnover_gamma: float = 0.0,       # add this
+    turnover_gamma: float = 0.0,
 ):
     n_assets = train_returns.shape[1]
     R = train_returns.cov().values
@@ -84,7 +85,9 @@ def make_kalman_strategy(
     mu_0 = train_returns.mean().values
     kf.initialize(mu_0=mu_0)
     last_processed_idx = 0
-    w_prev = [None]                    # add this
+    w_prev = [None]
+    filtered_history = []   # running record of kf.mu_hat, one row per day
+    filtered_index = []
 
     def strategy(date, returns_so_far):
         nonlocal last_processed_idx
@@ -105,22 +108,33 @@ def make_kalman_strategy(
             kf.predict(q_override=q_override)
             kf.update(r_t)
 
+            filtered_history.append(kf.mu_hat.copy())
+            filtered_index.append(date_i)
+
         last_processed_idx = current_len
-        mu_kf = kf.mu_hat.copy()
 
         if current_len < cov_window:
             n = returns_so_far.shape[1]
             w_prev[0] = np.ones(n) / n
             return w_prev[0]
 
-        recent = returns_so_far.iloc[-cov_window:]
-        sigma = recent.cov().values
+        # Return estimate: same 60-day rolling mean of raw returns as Rolling MV
+        mu = returns_so_far.iloc[-ret_window:].mean().values
 
-        w = optimize_portfolio(mu_kf, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
-        w_prev[0] = w.copy()           # add this
+        # Covariance estimate: built from the Kalman-filtered return series
+        filtered_recent = pd.DataFrame(
+            filtered_history[-cov_window:],
+            index=filtered_index[-cov_window:],
+            columns=returns_so_far.columns,
+        )
+        sigma = filtered_recent.cov().values
+
+        w = optimize_portfolio(mu, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
+        w_prev[0] = w.copy()
         return w
 
     return strategy
+
 
 from sklearn.covariance import LedoitWolf
 

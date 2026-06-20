@@ -115,7 +115,11 @@ def main():
     # Test period only (out-of-sample)
     results_test = []
     for name, strat_func in strategies:
-        if name == "Static MV":
+        if name == "Rolling MV":
+            strat_func = make_rolling_mv_strategy(turnover_gamma=turnover_gamma)
+        elif name == "Ledoit-Wolf MV":
+            strat_func = make_ledoit_wolf_strategy(turnover_gamma=turnover_gamma)
+        elif name == "Static MV":
             strat_func = make_static_mv_strategy(train)
         elif name == "Kalman MV":
             strat_func = make_kalman_strategy(
@@ -123,6 +127,7 @@ def main():
                 q_scale=q_best,
                 regime_labels=regime_labels,
                 regime_alphas=regime_alphas,
+                turnover_gamma=turnover_gamma,
             )
             # Warm up filter on training data before test period
             for i in range(len(train)):
