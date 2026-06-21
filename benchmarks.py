@@ -73,7 +73,7 @@ def make_kalman_strategy(
     use_filtered_sigma: bool = True,
 ):
     n_assets = train_returns.shape[1]
-    R = train_returns.cov().values
+    R = train_returns.cov().values + np.eye(n_assets) * 1e-6
     kf = KalmanReturnFilter(n_assets=n_assets, q_scale=q_scale, R=R)
     mu_0 = train_returns.mean().values
     kf.initialize(mu_0=mu_0)
@@ -141,8 +141,20 @@ def make_kalman_strategy(
             # that's actually Q-sensitive) while keeping the comparison to
             # the other strategies apples-to-apples.
             filt_trace = np.trace(filt_cov)
-            scale = np.trace(raw_cov) / filt_trace if filt_trace > 1e-12 else 1.0
-            sigma = filt_cov * scale
+            raw_trace = np.trace(raw_cov)
+            if filt_trace > 1e-12 and raw_trace > 0:
+                sigma = filt_cov * (raw_trace / filt_trace)
+            else:
+                # Filtered covariance has collapsed to near-zero -- rescaling
+                # by a near-infinite factor would be numerically unstable AND
+                # uninformative (there's no real signal left to preserve).
+                # Fall back to the raw covariance directly, rather than
+                # silently passing the unscaled near-zero matrix through
+                # (which would recreate the exact optimizer-saturation
+                # problem the rescaling exists to fix).
+                sigma = raw_cov.copy()
+            sigma = 0.5 * (sigma + sigma.T)
+            sigma = sigma + np.eye(n_assets) * 1e-8
         else:
             sigma = returns_so_far.iloc[-cov_window:].cov().values
 

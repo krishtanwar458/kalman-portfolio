@@ -30,13 +30,23 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
     # by it silently drops the first day's return from every metric below.
     total_growth = cumulative.iloc[-1]
     n_years = len(daily_ret) / trading_days
-    ann_return = total_growth ** (1 / n_years) - 1
+    ann_return = total_growth ** (1 / n_years) - 1  # CAGR -- for display only
 
     # Annualized volatility
     ann_vol = daily_ret.std() * np.sqrt(trading_days)
 
-    # Sharpe ratio (assumes risk-free rate ~ 0 for simplicity)
-    sharpe = ann_return / ann_vol if ann_vol > 0 else 0
+    # Sharpe ratio: numerator uses simple/arithmetic mean annualization, NOT
+    # CAGR. Sharpe's clean sqrt(T) scaling only holds when numerator and
+    # denominator are both arithmetic -- mixing a geometric (CAGR) numerator
+    # with an arithmetic-scaled vol denominator isn't internally consistent,
+    # and silently produces a different (always lower, since CAGR <=
+    # arithmetic mean) number than every other Sharpe calculation in this
+    # codebase (block_bootstrap_sharpe, regime_sharpe_table, regime_analysis
+    # all correctly use pure arithmetic). ann_return above is kept as CAGR
+    # since it's genuinely the right way to describe realized compounding --
+    # it just shouldn't feed into Sharpe.
+    ann_mean_simple = daily_ret.mean() * trading_days
+    sharpe = ann_mean_simple / ann_vol if ann_vol > 0 else 0
 
     # Maximum drawdown
     rolling_max = cumulative.cummax()

@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from config import COV_WINDOW, RETURN_WINDOW
+from backtest import get_rebalance_dates
 
 
 # Grid of Q values to evaluate
@@ -42,6 +43,13 @@ def select_q_cv(
     split  = int(T * (1 - val_fraction))
     Y_warm = Y[:split]
     Y_val  = Y[split:]
+    val_dates = train_returns.index[split:]
+
+    # Real calendar rebalance dates (matches run_backtest() exactly), rather
+    # than approximating with a fixed 21-trading-day counter -- calendar
+    # months run 19-23 trading days, so a fixed counter drifts out of phase
+    # with production's actual rebalance dates over a multi-month window.
+    rebalance_dates = set(get_rebalance_dates(train_returns))
 
     R   = np.cov(Y.T) + np.eye(n) * 1e-6
     mu0 = Y_warm.mean(axis=0)
@@ -73,10 +81,9 @@ def select_q_cv(
 
         port_returns = []
         current_weights = np.ones(n) / n
-        rebal_counter = 0
 
         for t in range(len(Y_val)):
-            if rebal_counter % 21 == 0 and len(filt_buffer) >= buf_len:
+            if val_dates[t] in rebalance_dates and len(filt_buffer) >= buf_len:
                 try:
                     if use_filtered_mu:
                         mu_t = mu_val.copy()
@@ -87,8 +94,13 @@ def select_q_cv(
                     if use_filtered_sigma:
                         filt_cov = np.cov(np.array(filt_buffer[-cov_window:]).T)
                         filt_trace = np.trace(filt_cov)
-                        scale = np.trace(raw_cov) / filt_trace if filt_trace > 1e-12 else 1.0
-                        sigma_t = filt_cov * scale + np.eye(n) * 1e-8
+                        raw_trace = np.trace(raw_cov)
+                        if filt_trace > 1e-12 and raw_trace > 0:
+                            sigma_t = filt_cov * (raw_trace / filt_trace)
+                        else:
+                            sigma_t = raw_cov.copy()
+                        sigma_t = 0.5 * (sigma_t + sigma_t.T)
+                        sigma_t = sigma_t + np.eye(n) * 1e-8
                     else:
                         sigma_t = raw_cov + np.eye(n) * 1e-8
 
@@ -99,7 +111,6 @@ def select_q_cv(
                     pass
 
             port_returns.append(current_weights @ Y_val[t])
-            rebal_counter += 1
 
             # Update filter
             mu_p   = mu_val
@@ -145,6 +156,7 @@ def _run_regime_validation(
     R: np.ndarray,
     Q_base: np.ndarray,
     regime_alphas: dict,
+    rebalance_dates: set,
     cov_window: int = COV_WINDOW,
     ret_window: int = RETURN_WINDOW,
     use_filtered_mu: bool = False,
@@ -183,7 +195,6 @@ def _run_regime_validation(
     filt_buffer = list(filtered_warm[-buf_len:])
     port_returns = []
     current_weights = np.ones(n) / n
-    rebal_counter = 0
 
     for t in range(len(Y_val)):
         date_t = dates_val[t]
@@ -191,7 +202,7 @@ def _run_regime_validation(
                    else (regime_labels.loc[date_t] if date_t in regime_labels.index else "MED_VOL")
         Q_t = Q_map.get(regime_t, Q_base)
 
-        if rebal_counter % 21 == 0 and len(filt_buffer) >= buf_len:
+        if date_t in rebalance_dates and len(filt_buffer) >= buf_len:
             try:
                 if use_filtered_mu:
                     mu_t = mu_val.copy()
@@ -202,8 +213,13 @@ def _run_regime_validation(
                 if use_filtered_sigma:
                     filt_cov = np.cov(np.array(filt_buffer[-cov_window:]).T)
                     filt_trace = np.trace(filt_cov)
-                    scale = np.trace(raw_cov) / filt_trace if filt_trace > 1e-12 else 1.0
-                    sigma_t = filt_cov * scale + np.eye(n) * 1e-8
+                    raw_trace = np.trace(raw_cov)
+                    if filt_trace > 1e-12 and raw_trace > 0:
+                        sigma_t = filt_cov * (raw_trace / filt_trace)
+                    else:
+                        sigma_t = raw_cov.copy()
+                    sigma_t = 0.5 * (sigma_t + sigma_t.T)
+                    sigma_t = sigma_t + np.eye(n) * 1e-8
                 else:
                     sigma_t = raw_cov + np.eye(n) * 1e-8
 
@@ -214,7 +230,6 @@ def _run_regime_validation(
                 pass
 
         port_returns.append(current_weights @ Y_val[t])
-        rebal_counter += 1
 
         # Filter update
         mu_p = mu_val
@@ -258,6 +273,7 @@ def calibrate_regime_alphas(
 
     R = np.cov(Y.T) + np.eye(n) * 1e-6
     Q_base = q_best * np.eye(n)
+    rebalance_dates = set(get_rebalance_dates(train_returns))
 
     current_alphas = {r: 1.0 for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]}
     all_results = {}
@@ -272,6 +288,7 @@ def calibrate_regime_alphas(
             trial_alphas = {**current_alphas, regime: alpha}
             sharpe = _run_regime_validation(
                 Y_warm, Y_val, dates_val, regime_labels, R, Q_base, trial_alphas,
+                rebalance_dates,
                 use_filtered_mu=use_filtered_mu, use_filtered_sigma=use_filtered_sigma,
             )
             rows.append({"alpha": alpha, "Val_Sharpe": sharpe})

@@ -5,9 +5,7 @@ import pandas as pd
 
 warnings.filterwarnings("ignore")
 
-import yfinance as yf
-import numpy as np
-from config import TICKERS, REGIMES, RESULTS_DIR, PLOTS_DIR, Q_SCALE, TRAIN_START, TEST_END
+from config import TICKERS, REGIMES, RESULTS_DIR, PLOTS_DIR, Q_SCALE
 from data_loader import load_prices, compute_returns, split_data
 from kalman_filter import build_filter_from_training
 from backtest import run_backtest, slice_result
@@ -25,17 +23,6 @@ from plots import (
     plot_weights_over_time,
     plot_filtered_vs_rolling_mu,
 )
-
-
-tickers = ["SPY", "QQQ", "TLT", "GLD", "EFA", "VNQ"]
-download_end = (pd.Timestamp(TEST_END) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-prices = yf.download(tickers, start=TRAIN_START, end=download_end)["Close"]
-returns = np.log(prices / prices.shift(1)).dropna()
-
-for ticker in tickers:
-    ann_ret = returns[ticker].mean() * 252
-    ann_vol = returns[ticker].std() * np.sqrt(252)
-    print(f"{ticker}: Return={ann_ret:.2%}, Vol={ann_vol:.2%}")
 
 
 # The three Kalman variants under test — each isolates a different input.

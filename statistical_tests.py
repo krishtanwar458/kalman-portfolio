@@ -4,13 +4,19 @@ statistical_tests.py — Rigorous statistical testing for portfolio comparison.
 Two tests implemented:
 
 1. Diebold-Mariano (DM) Test
-   Tests whether the Kalman Filter's return forecasts are significantly
-   more accurate than rolling-window forecasts. Operates on forecast
-   errors, not portfolio returns. This is the right test for comparing
-   *predictive accuracy* of the two estimation methods.
+   Tests whether a Kalman variant's filtered return-signal forecast is
+   significantly more accurate than the rolling-window forecast. Operates
+   on forecast errors, not portfolio returns or covariance forecasts. This
+   is the right test for comparing *predictive accuracy* of the mean
+   estimate each variant actually used during its own backtest (regime-
+   switching included) -- not a generic, shared "Kalman Filter" series.
 
    H0: The two methods have equal forecast accuracy (E[d_t] = 0)
-   H1: Kalman Filter is more accurate (E[d_t] < 0)
+   H1: The Kalman variant's filter is more accurate (E[d_t] < 0)
+
+   Run once per variant (Kalman-Mu MV, Kalman-Sigma MV, Kalman-Full MV),
+   since each has its own calibrated Q* and regime alphas and therefore its
+   own filtered mean series.
 
    Reference: Diebold & Mariano (1995), JBES.
 
@@ -20,7 +26,7 @@ Two tests implemented:
    autocorrelation structure by resampling in contiguous blocks.
 
    I compute 95% CIs for each strategy's Sharpe ratio and check
-   whether the Kalman MV CI lies above the Rolling MV CI.
+   whether each Kalman variant's CI lies above the Rolling MV CI.
 
    Reference: Ledoit & Wolf (2008), Journal of Econometrics.
 
@@ -77,8 +83,11 @@ def diebold_mariano_test(
     """
     Diebold-Mariano test for equal predictive accuracy.
 
-    Compares whether the Kalman Filter has significantly lower forecast
-    error than the rolling-window estimator.
+    Compares whether a Kalman variant's filtered mean has significantly
+    lower forecast error than the rolling-window estimator. Pass in the
+    forecast-error series for the SPECIFIC variant being evaluated -- this
+    function doesn't know or care which variant it is, that's determined
+    entirely by what filtered_mu series produced forecast_errors_kalman.
 
     Parameters
     ----------
@@ -153,12 +162,17 @@ def compute_forecast_errors(
     Compute one-step-ahead forecast errors for both methods.
 
     At each time t, the forecast is made at t-1 and evaluated at t.
-    - Kalman forecast: filtered_mu at t-1 (already computed)
+    - Kalman forecast: filtered_mu at t-1 (already computed elsewhere --
+      pass in the specific variant's real, regime-alpha-aware trajectory,
+      e.g. read directly off that variant's strategy closure, not a
+      separately-rebuilt constant-Q filter)
     - Rolling forecast: mean of returns[t-window:t-1]
 
     Parameters
     ----------
-    filtered_mu : DataFrame of Kalman-filtered expected returns (T x N)
+    filtered_mu : DataFrame of one Kalman variant's filtered expected
+                  returns (T x N) -- this function is variant-agnostic,
+                  it just evaluates whatever series it's given
     returns     : DataFrame of actual daily returns (T x N)
     window      : lookback window for rolling mean forecast
 
@@ -291,6 +305,15 @@ def bootstrap_sharpe_comparison(
 
 
 # 3. Convenience wrapper — run everything
+#
+# NOTE: not used by main.py, which calls compute_forecast_errors /
+# diebold_mariano_test / bootstrap_sharpe_comparison directly, once per
+# Kalman variant, since each variant needs its own filtered_mu series (see
+# module docstring). This wrapper predates the 3-variant design and only
+# knows about a single "Kalman MV" -- kept for reference / potential reuse
+# in a single-variant context, but would need a variant-aware rewrite
+# (a loop over KALMAN_VARIANTS, like main.py's Step 6) before being usable
+# in the current pipeline.
 
 def run_all_tests(
     results: list[dict],
@@ -300,12 +323,14 @@ def run_all_tests(
     n_bootstrap: int = 1000,
 ) -> dict:
     """
-    Run the full statistical testing suite.
+    Run the full statistical testing suite for a single Kalman variant.
 
     Parameters
     ----------
     results      : list of dicts from run_backtest()
-    filtered_mu  : Kalman-filtered expected returns (T x N)
+    filtered_mu  : one variant's filtered expected returns (T x N) -- its
+                   own real, regime-alpha-aware trajectory, not a generic
+                   constant-Q stand-in
     returns      : actual daily returns (T x N)
     rolling_window : window used in rolling MV strategy
     n_bootstrap  : bootstrap resamples for Sharpe CIs
@@ -318,8 +343,8 @@ def run_all_tests(
 
     # Diebold-Mariano test (per asset, then averaged)
     print("\n[1] Diebold-Mariano Forecast Accuracy Test")
-    print("    H0: Kalman and Rolling have equal forecast accuracy")
-    print("    H1: Kalman has lower forecast error (one-sided)")
+    print("    H0: this variant's filter and Rolling have equal forecast accuracy")
+    print("    H1: this variant's filter has lower forecast error (one-sided)")
 
     errors_kf, errors_roll = compute_forecast_errors(filtered_mu, returns, window=rolling_window)
 
@@ -348,7 +373,11 @@ def run_all_tests(
     sharpe_cis = bootstrap_sharpe_comparison(results, n_bootstrap=n_bootstrap)
     print(f"\n{sharpe_cis.to_string()}")
 
-    # Assess overlap
+    # Assess overlap -- caller must pass the variant's actual strategy name
+    # (this wrapper has no way to know which of the 3 Kalman variants
+    # `filtered_mu` belongs to; it only checks the literal name "Kalman MV",
+    # which no longer exists as a strategy label and will simply skip this
+    # block in the current 3-variant pipeline)
     kalman_row = sharpe_cis.loc["Kalman MV"] if "Kalman MV" in sharpe_cis.index else None
     rolling_row = sharpe_cis.loc["Rolling MV"] if "Rolling MV" in sharpe_cis.index else None
 
@@ -357,9 +386,9 @@ def run_all_tests(
         partial_overlap = kalman_row["95% CI Upper"] > rolling_row["95% CI Upper"]
         print("\n    CI Interpretation:")
         if no_overlap:
-            print("    CIs do NOT overlap: Kalman MV Sharpe is statistically superior to Rolling MV.")
+            print("    CIs do NOT overlap: this variant's Sharpe is statistically superior to Rolling MV.")
         elif partial_overlap:
-            print("    CIs partially overlap: Kalman MV shows higher Sharpe but difference is not statistically conclusive.")
+            print("    CIs partially overlap: this variant shows higher Sharpe but difference is not statistically conclusive.")
         else:
             print("    CIs fully overlap: No statistically significant difference in Sharpe ratios.")
 

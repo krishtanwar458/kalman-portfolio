@@ -84,6 +84,15 @@ def collect_covariance_divergence(
     At each rebalancing date, compute the Frobenius norm of the difference
     between the Kalman-filtered covariance and the rolling-window covariance.
 
+    The filtered covariance is trace-rescaled to match the rolling
+    covariance's magnitude before comparing -- the same rescaling production
+    (benchmarks.py / q_calibration.py) applies before this matrix ever
+    reaches the optimizer. Left unscaled, this divergence metric would be
+    dominated by the (largely uninformative) scale suppression filtering
+    causes at low Q, rather than the shape/correlation differences that are
+    the actually-interesting part of what the filter is doing -- and it
+    would no longer describe the covariance the optimizer actually used.
+
     Returns
     -------
     pd.Series indexed by rebalancing dates, values = Frobenius norm difference
@@ -133,8 +142,16 @@ def collect_covariance_divergence(
         # Rolling covariance from raw returns
         sigma_rolling = returns.iloc[window_slice].cov().values
 
-        # Kalman covariance from filtered returns
-        sigma_kalman = filtered_df.iloc[window_slice].cov().values
+        # Kalman covariance from filtered returns -- rescaled to match
+        # production's actual mechanism (see docstring above)
+        sigma_kalman_raw = filtered_df.iloc[window_slice].cov().values
+        filt_trace = np.trace(sigma_kalman_raw)
+        raw_trace = np.trace(sigma_rolling)
+        if filt_trace > 1e-12 and raw_trace > 0:
+            sigma_kalman = sigma_kalman_raw * (raw_trace / filt_trace)
+        else:
+            sigma_kalman = sigma_rolling.copy()
+        sigma_kalman = 0.5 * (sigma_kalman + sigma_kalman.T)
 
         # Frobenius norm of difference
         divergence[date] = np.linalg.norm(sigma_kalman - sigma_rolling, "fro")

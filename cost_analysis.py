@@ -38,9 +38,12 @@ def annualized_metrics(daily_returns: pd.Series) -> dict:
                                                            # cumulative.iloc[0], which is
                                                            # (1+r_0) and silently drops day 0
     n_years = len(daily_returns) / 252
-    ann_ret = total_growth ** (1 / n_years) - 1           # CAGR — matches evaluation.py
+    ann_ret = total_growth ** (1 / n_years) - 1           # CAGR — for display only
     ann_vol = daily_returns.std() * np.sqrt(252)
-    sharpe  = ann_ret / ann_vol if ann_vol > 0 else 0.0
+    # Sharpe uses arithmetic mean annualization, not CAGR -- see evaluation.py's
+    # compute_metrics() for why mixing the two isn't internally consistent.
+    ann_mean_simple = daily_returns.mean() * 252
+    sharpe  = ann_mean_simple / ann_vol if ann_vol > 0 else 0.0
     max_dd  = ((cumulative - cumulative.cummax()) / cumulative.cummax()).min()
     return {
         "Ann. Return (%)": round(ann_ret * 100, 2),
