@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .DS_Store
 *.egg-info/
-.diagnostic.py.diagnostic.py
+
+diagnostic.py
