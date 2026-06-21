@@ -83,10 +83,14 @@ def select_q_cv(
                     else:
                         mu_t = np.mean(raw_buffer[-ret_window:], axis=0)
 
+                    raw_cov = np.cov(np.array(raw_buffer[-cov_window:]).T)
                     if use_filtered_sigma:
-                        sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                        filt_cov = np.cov(np.array(filt_buffer[-cov_window:]).T)
+                        filt_trace = np.trace(filt_cov)
+                        scale = np.trace(raw_cov) / filt_trace if filt_trace > 1e-12 else 1.0
+                        sigma_t = filt_cov * scale + np.eye(n) * 1e-8
                     else:
-                        sigma_t = np.cov(np.array(raw_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                        sigma_t = raw_cov + np.eye(n) * 1e-8
 
                     w = optimize_portfolio(mu_t, sigma_t)
                     if w is not None and not np.any(np.isnan(w)):
@@ -194,10 +198,14 @@ def _run_regime_validation(
                 else:
                     mu_t = np.mean(raw_buffer[-ret_window:], axis=0)
 
+                raw_cov = np.cov(np.array(raw_buffer[-cov_window:]).T)
                 if use_filtered_sigma:
-                    sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                    filt_cov = np.cov(np.array(filt_buffer[-cov_window:]).T)
+                    filt_trace = np.trace(filt_cov)
+                    scale = np.trace(raw_cov) / filt_trace if filt_trace > 1e-12 else 1.0
+                    sigma_t = filt_cov * scale + np.eye(n) * 1e-8
                 else:
-                    sigma_t = np.cov(np.array(raw_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                    sigma_t = raw_cov + np.eye(n) * 1e-8
 
                 w = optimize_portfolio(mu_t, sigma_t)
                 if w is not None and not np.any(np.isnan(w)):

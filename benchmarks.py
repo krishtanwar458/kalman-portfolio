@@ -124,13 +124,40 @@ def make_kalman_strategy(
                 index=filtered_index[-cov_window:],
                 columns=returns_so_far.columns,
             )
-            sigma = filtered_recent.cov().values
+            filt_cov = filtered_recent.cov().values
+            raw_cov = returns_so_far.iloc[-cov_window:].cov().values
+            # Rescale the filtered covariance's overall magnitude to match the
+            # raw covariance over the same window. Filtering intentionally
+            # suppresses variance (more aggressively at low Q) — that's
+            # meaningful as far as *shape* (which assets it currently
+            # believes co-move), but it leaves the matrix on a completely
+            # different absolute scale than RISK_AVERSION was calibrated
+            # against (raw-magnitude covariance, same as Rolling MV /
+            # Ledoit-Wolf MV). Left unscaled, very small Q produces a
+            # near-zero-magnitude covariance the optimizer's risk term can't
+            # see past the constant return term, so it collapses into an
+            # unconstrained-return chase regardless of Q. Matching the trace
+            # preserves the filter's relative/correlation structure (the part
+            # that's actually Q-sensitive) while keeping the comparison to
+            # the other strategies apples-to-apples.
+            filt_trace = np.trace(filt_cov)
+            scale = np.trace(raw_cov) / filt_trace if filt_trace > 1e-12 else 1.0
+            sigma = filt_cov * scale
         else:
             sigma = returns_so_far.iloc[-cov_window:].cov().values
 
         w = optimize_portfolio(mu, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
         w_prev[0] = w.copy()
         return w
+
+    # Expose the real, regime-alpha-aware mu_hat trajectory this strategy
+    # actually used, so callers (e.g. the DM test) can evaluate the filter
+    # this variant really ran, instead of rebuilding a separate constant-Q
+    # filter that silently ignores regime_alphas. filtered_history/index are
+    # mutated in place during the backtest, so these references stay valid
+    # (and complete) once run_backtest() has finished calling strategy().
+    strategy.filtered_history = filtered_history
+    strategy.filtered_index = filtered_index
 
     return strategy
 

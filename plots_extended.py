@@ -7,13 +7,17 @@ from config import PLOTS_DIR
 
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
-# Color palette — consistent across all plots
+# Color palette — single source of truth, imported by plots.py and
+# cost_analysis.py too, so every figure in the paper uses the same colors
+# for the same strategy.
 COLORS = {
-    "Kalman MV":  "#2196F3",   # blue
-    "Rolling MV": "#FF5722",   # red-orange
-    "Static MV":  "#9E9E9E",   # grey
-    "Equal Weight": "#4CAF50", # green
-    "Ledoit-Wolf MV": "#00BCD4",  # cyan
+    "Equal Weight":     "#4CAF50",   # green
+    "Rolling MV":       "#FF5722",   # red-orange
+    "Static MV":        "#9E9E9E",   # grey
+    "Ledoit-Wolf MV":   "#00BCD4",   # cyan
+    "Kalman-Mu MV":     "#1565C0",   # deep blue     — mean-isolation
+    "Kalman-Sigma MV":  "#8E24AA",   # purple        — covariance-isolation
+    "Kalman-Full MV":   "#D81B60",   # magenta/pink  — both adaptive
 }
 
 REGIME_COLORS = {
@@ -22,6 +26,8 @@ REGIME_COLORS = {
     "HIGH_VOL": "#EF5350",   # red
     "CRISIS":   "#7B1FA2",   # purple
 }
+
+REGIME_ORDER = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -106,9 +112,14 @@ def plot_regime_performance(
 ):
     """
     Grouped bar chart: x-axis = regimes, bars = strategies.
+
+    Includes EVERY strategy column present in regime_sharpe_df — strategies
+    not in COLORS get a safe fallback color rather than being silently
+    dropped from the plot (this is what caused the Kalman bars to vanish
+    after the 3-variant rename: the old version filtered to `c in COLORS`).
     """
     plot_df = regime_sharpe_df.drop(columns=["N Days"], errors="ignore")
-    strategies = [c for c in plot_df.columns if c in COLORS]
+    strategies = list(plot_df.columns)
     regimes = plot_df.index.tolist()
 
     n_strategies = len(strategies)
@@ -116,17 +127,18 @@ def plot_regime_performance(
     bar_width = 0.7 / n_strategies
     x = np.arange(n_regimes)
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(13, 6))
 
     for i, strat in enumerate(strategies):
         offset = (i - n_strategies / 2 + 0.5) * bar_width
         values = plot_df[strat].values
+        color = COLORS.get(strat, "#607D8B")
         bars = ax.bar(
             x + offset,
             values,
             width=bar_width,
             label=strat,
-            color=COLORS.get(strat, "#607D8B"),
+            color=color,
             alpha=0.85,
             edgecolor="white",
             linewidth=0.5,
@@ -141,8 +153,8 @@ def plot_regime_performance(
                     f"{val:.2f}",
                     ha="center",
                     va="bottom",
-                    fontsize=8,
-                    color=COLORS.get(strat, "#333"),
+                    fontsize=7,
+                    color=color,
                 )
 
     ax.axhline(0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
@@ -160,7 +172,7 @@ def plot_regime_performance(
 
     ax.set_ylabel("Annualized Sharpe Ratio", fontsize=12)
     ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
-    ax.legend(fontsize=10, loc="upper right")
+    ax.legend(fontsize=9, loc="upper right", ncol=2)
     ax.grid(axis="y", alpha=0.3)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -177,76 +189,146 @@ def plot_regime_performance(
 # Figure 3: Kalman advantage by regime
 # ─────────────────────────────────────────────────────────────
 
-def plot_kalman_advantage_by_regime(
-    advantage_df: pd.DataFrame,
-    title: str = "Kalman MV Sharpe Advantage over Rolling MV by Regime",
-    save: bool = True,
-):
+def plot_kalman_advantage_by_regime(advantage_df: pd.DataFrame, outpath: str = None):
     """
-    Bar chart showing Kalman MV Sharpe MINUS Rolling MV Sharpe per regime.
+    Plot Kalman variant Sharpe advantage over Rolling MV by regime.
+
+    Restores the original per-regime-colored, value-annotated bar style
+    (this had been replaced with a generic plt.bar() call when multi-variant
+    support was patched in, which is why it lost its styling).
+
+    Supports both:
+      - a single-variant advantage table (one '... Advantage' column) —
+        bars colored by REGIME (matching the original figure), variant name
+        pulled from the column and used in the title/axis/filename.
+      - a combined table with multiple '... Advantage' columns — grouped
+        bars colored by STRATEGY (using the shared COLORS dict) instead,
+        since per-regime coloring doesn't disambiguate multiple variants.
     """
-    regimes = advantage_df.index.tolist()
-    advantage = advantage_df["Kalman Advantage"].values
+    df = advantage_df.copy()
 
-    colors = [REGIME_COLORS.get(r, "#607D8B") for r in regimes]
+    # Regime can arrive either as a column or as the DataFrame's index
+    # (the latter happens upstream in regime_detector.py; to_csv() then
+    # writes it out as a named column, which is why the CSV looks fine
+    # even when the in-memory object passed here wasn't) -- handle both.
+    if df.index.name in ("Regime", "regime"):
+        df = df.reset_index()
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    if "Regime" in df.columns:
+        regime_col = "Regime"
+    elif "regime" in df.columns:
+        regime_col = "regime"
+    else:
+        regime_col = df.columns[0]
 
-    bars = ax.bar(regimes, advantage, color=colors, alpha=0.85,
-                  edgecolor="white", linewidth=0.8, width=0.5)
+    advantage_cols = [c for c in df.columns if "Advantage" in c]
+    if not advantage_cols:
+        raise ValueError(f"No advantage columns found. Available columns: {list(df.columns)}")
 
-    for bar, val in zip(bars, advantage):
-        if not np.isnan(val):
-            if abs(val) > 0.02:
-                # Large enough — center label inside bar with white text
-                ypos = bar.get_height() / 2
-                va = "center"
-                text_color = "white"
-            elif val >= 0:
-                # Small positive — label above bar
-                ypos = bar.get_height() + 0.008
-                va = "bottom"
-                text_color = "black"
-            else:
-                # Small negative — label below bar
-                ypos = bar.get_height() - 0.008
-                va = "top"
-                text_color = "black"
+    # Sort into the canonical regime order when possible
+    if set(df[regime_col].astype(str)) <= set(REGIME_ORDER):
+        df["_order"] = df[regime_col].astype(str).map(REGIME_ORDER.index)
+        df = df.sort_values("_order").drop(columns="_order").reset_index(drop=True)
+
+    regimes = df[regime_col].astype(str).values
+    x = np.arange(len(regimes))
+    n_days_col = "N Days" if "N Days" in df.columns else None
+
+    xlabels = []
+    for i, regime in enumerate(regimes):
+        n_days = int(df[n_days_col].iloc[i]) if n_days_col else ""
+        xlabels.append(f"{regime}\n(n={n_days}d)")
+
+    if len(advantage_cols) == 1:
+        col = advantage_cols[0]
+        variant_name = col.replace(" Advantage", "")
+        values = df[col].values
+
+        # Label offset/threshold scale with the data's own range instead of
+        # a fixed constant -- a fixed 0.012 offset is fine for Kalman-Full's
+        # ~0.05-0.7 range but is *larger than the entire data range* for
+        # Kalman-Sigma's ~0.00-0.01 range, pushing labels far outside the
+        # visible axes (this was the "broken" plot).
+        val_range = float(np.max(values) - np.min(values)) if len(values) else 0.0
+        if val_range < 1e-9:
+            val_range = max(abs(float(np.max(values))), 1e-3)
+        label_offset = val_range * 0.06
+        inside_threshold = val_range * 0.25
+
+        fig, ax = plt.subplots(figsize=(9, 5.5))
+        bar_colors = [REGIME_COLORS.get(r, "#9E9E9E") for r in regimes]
+        bars = ax.bar(x, values, color=bar_colors, edgecolor="white", linewidth=0.5)
+
+        for bar, val in zip(bars, values):
+            inside = abs(val) > inside_threshold
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
-                ypos,
+                val / 2 if inside else val + (label_offset if val >= 0 else -label_offset),
                 f"{val:+.3f}",
                 ha="center",
-                va=va,
+                va="center" if inside else ("bottom" if val >= 0 else "top"),
                 fontsize=10,
                 fontweight="bold",
-                color=text_color,
+                color="white" if inside else "black",
             )
 
-    ax.axhline(0, color="black", linewidth=1, linestyle="--", alpha=0.7)
-    ax.set_ylabel("Sharpe Advantage (Kalman MV − Rolling MV)", fontsize=11)
-    ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
-    ax.set_xlabel("Market Regime (by realized volatility)", fontsize=11)
-    ax.grid(axis="y", alpha=0.3)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+        # Headroom so labels never sit at/past the axes edge regardless of scale
+        ymin, ymax = ax.get_ylim()
+        pad = val_range * 0.18
+        ax.set_ylim(ymin - pad, ymax + pad)
 
-    # Add headroom so bar labels don't clip into title
-    ymin, ymax = ax.get_ylim()
-    ax.set_ylim(ymin, ymax * 1.20)
+        ax.axhline(0, color="black", linewidth=1, linestyle="--", alpha=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xlabels, fontsize=10)
+        ax.set_xlabel("Market Regime (by realized volatility)", fontsize=11)
+        ax.set_ylabel(f"Sharpe Advantage ({variant_name} \u2212 Rolling MV)", fontsize=11)
+        ax.set_title(f"{variant_name} Sharpe Advantage over Rolling MV by Regime",
+                     fontsize=13, fontweight="bold", pad=12)
+        ax.grid(axis="y", alpha=0.3)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    # Add regime day counts at the bottom
-    if "N Days" in advantage_df.columns:
-        for i, (regime, row) in enumerate(advantage_df.iterrows()):
-            ax.text(i, ymin * 0.85, f"n={int(row['N Days'])}d",
-                    ha="center", fontsize=8, color="grey")
+        if outpath is None:
+            safe_name = variant_name.replace(" ", "_").replace("-", "_")
+            outpath = os.path.join(PLOTS_DIR, f"{safe_name}_advantage_by_regime.png")
+
+    else:
+        fig, ax = plt.subplots(figsize=(12, 6.5))
+        width = 0.8 / len(advantage_cols)
+
+        for i, col in enumerate(advantage_cols):
+            variant_name = col.replace(" Advantage", "")
+            offset = (i - (len(advantage_cols) - 1) / 2) * width
+            values = df[col].values
+            color = COLORS.get(variant_name, "#607D8B")
+            bars = ax.bar(x + offset, values, width=width, label=variant_name,
+                          color=color, edgecolor="white", linewidth=0.5)
+            for bar, val in zip(bars, values):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                       val + (0.01 if val >= 0 else -0.01),
+                       f"{val:+.2f}", ha="center",
+                       va="bottom" if val >= 0 else "top",
+                       fontsize=7, color=color, fontweight="bold")
+
+        ax.axhline(0, color="black", linewidth=1, linestyle="--", alpha=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels(xlabels, fontsize=10)
+        ax.set_xlabel("Market Regime (by realized volatility)", fontsize=11)
+        ax.set_ylabel("Sharpe Advantage (vs Rolling MV)", fontsize=11)
+        ax.set_title("Kalman Variant Sharpe Advantage over Rolling MV by Regime",
+                     fontsize=13, fontweight="bold", pad=12)
+        ax.legend(fontsize=9)
+        ax.grid(axis="y", alpha=0.3)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        if outpath is None:
+            outpath = os.path.join(PLOTS_DIR, "kalman_variants_advantage_by_regime.png")
 
     plt.tight_layout(pad=1.5)
-    if save:
-        path = os.path.join(PLOTS_DIR, "kalman_advantage_by_regime.png")
-        plt.savefig(path, dpi=150, bbox_inches="tight")
-        print(f"  Saved: {path}")
+    plt.savefig(outpath, dpi=150, bbox_inches="tight")
     plt.close()
+    print(f"  Saved: {outpath}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -293,7 +375,7 @@ def plot_realized_volatility_with_regimes(
                alpha=0.7, label=f"Crisis threshold (+2σ = {vol_mean + 2*vol_std:.1%})")
 
     patches = [mpatches.Patch(color=REGIME_COLORS[r], alpha=0.4, label=r)
-               for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"] if r in reg_plot.values]
+               for r in REGIME_ORDER if r in reg_plot.values]
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles=handles + patches, fontsize=9, loc="upper right", ncol=2)
 
@@ -320,18 +402,26 @@ def plot_forecast_error_comparison(
     errors_kalman: pd.DataFrame,
     errors_rolling: pd.DataFrame,
     asset: str = "SPY",
+    variant_name: str = "Kalman-Mu MV",
     title: str = None,
     save: bool = True,
 ):
     """
-    Rolling RMSE comparison between Kalman and rolling-window forecasts.
+    Rolling RMSE comparison between a Kalman variant's filtered forecast and
+    rolling-window forecasts, for one asset.
+
+    variant_name selects the color from COLORS (was previously hardcoded to
+    the literal string "Kalman MV", which no longer exists as a key now that
+    there are three variants) and labels the legend/title accordingly.
     """
     if asset not in errors_kalman.columns:
         asset = errors_kalman.columns[0]
         print(f"  [Warning] Requested asset not found, using {asset}")
 
     if title is None:
-        title = f"Rolling 60-Day Forecast RMSE: Kalman vs Rolling Mean ({asset})"
+        title = f"Rolling 60-Day Forecast RMSE: {variant_name} vs Rolling Mean ({asset})"
+
+    kalman_color = COLORS.get(variant_name, "#1E88E5")
 
     window = 60
     rmse_kf = errors_kalman[asset].pow(2).rolling(window).mean().pow(0.5)
@@ -340,16 +430,16 @@ def plot_forecast_error_comparison(
     common = rmse_kf.dropna().index.intersection(rmse_roll.dropna().index)
 
     fig, ax = plt.subplots(figsize=(13, 5))
-    ax.plot(common, rmse_kf.loc[common], color=COLORS["Kalman MV"], linewidth=1.2,
-            alpha=0.9, label="Kalman Filter RMSE")
+    ax.plot(common, rmse_kf.loc[common], color=kalman_color, linewidth=1.2,
+            alpha=0.9, label=f"{variant_name} RMSE")
     ax.plot(common, rmse_roll.loc[common], color=COLORS["Rolling MV"], linewidth=1.2,
             alpha=0.9, label="Rolling Mean RMSE", linestyle="--")
 
     diff = rmse_kf.loc[common] - rmse_roll.loc[common]
     ax.fill_between(common, 0, 1, where=diff < 0,
                     transform=ax.get_xaxis_transform(),
-                    alpha=0.08, color=COLORS["Kalman MV"],
-                    label="Kalman lower error")
+                    alpha=0.08, color=kalman_color,
+                    label=f"{variant_name} lower error")
 
     ax.set_ylabel("Rolling RMSE (60-day)", fontsize=11)
     ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
@@ -360,7 +450,8 @@ def plot_forecast_error_comparison(
 
     plt.tight_layout(pad=1.5)
     if save:
-        path = os.path.join(PLOTS_DIR, f"forecast_error_{asset}.png")
+        safe_name = variant_name.replace(" ", "_").replace("-", "_")
+        path = os.path.join(PLOTS_DIR, f"forecast_error_{safe_name}_{asset}.png")
         plt.savefig(path, dpi=150, bbox_inches="tight")
         print(f"  Saved: {path}")
     plt.close()

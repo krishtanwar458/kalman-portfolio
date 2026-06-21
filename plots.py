@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from config import PLOTS_DIR, REGIMES
+from plots_extended import COLORS
 
 # Style
 plt.rcParams.update({
@@ -34,7 +35,8 @@ def plot_cumulative_returns(results: list[dict], title: str = "Cumulative Return
     fig, ax = plt.subplots()
 
     for r in results:
-        ax.plot(r["cumulative"], label=r["name"], linewidth=1.5)
+        ax.plot(r["cumulative"], label=r["name"], linewidth=1.5,
+                color=COLORS.get(r["name"], "#607D8B"))
 
     # Shade regime periods
     colors = ["#FAEEDA","#FCEBEB","#E1F5EE","#EEEDFE","#E6F1FB"]
@@ -58,7 +60,8 @@ def plot_drawdowns(results: list[dict], title: str = "Drawdowns"):
     for r in results:
         cum = r["cumulative"]
         drawdown = (cum - cum.cummax()) / cum.cummax()
-        ax.plot(drawdown, label=r["name"], linewidth=1.2)
+        ax.plot(drawdown, label=r["name"], linewidth=1.2,
+                color=COLORS.get(r["name"], "#607D8B"))
 
     ax.set_title(title, pad=12)
     ax.set_ylabel("Drawdown")

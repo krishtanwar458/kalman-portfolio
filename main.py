@@ -101,12 +101,14 @@ def main():
     q_best = calibration["Kalman-Sigma MV"]["q_best"]
     regime_alphas = calibration["Kalman-Sigma MV"]["regime_alphas"]
 
-    # Build filter for the DM test / plotting — using Kalman-Mu's Q*, since the
-    # DM test measures forecast accuracy of the filtered MEAN, and Kalman-Mu is
-    # the variant whose calibration objective is actually about mean quality.
-    q_best_for_dm = calibration["Kalman-Mu MV"]["q_best"]
-    kf_for_plot = build_filter_from_training(train, q_scale=q_best_for_dm)
-    filtered_mu = kf_for_plot.filter_returns(returns)
+    # NOTE: filtered_mu (used by Step 5 plots and Step 6's DM test) is now
+    # built AFTER Step 3, directly from each strategy's own regime-alpha-aware
+    # trajectory -- see filtered_mu_from_strategy() below. Building it here
+    # via build_filter_from_training(q_scale=...) alone would silently ignore
+    # regime_alphas entirely (every step uses a constant Q), which is exactly
+    # what made Kalman-Mu and Kalman-Full's DM results bit-identical despite
+    # having different regime alphas: they happened to share q_best, and
+    # q_best was the only thing this used.
 
     # Step 3: Run Backtests
     print("\n=== STEP 3: Running Backtests ===")
@@ -129,6 +131,8 @@ def main():
         for name in KALMAN_VARIANTS
     ]
 
+    strategy_funcs = dict(strategies)
+
     # Full period (train + test) — run ONCE, continuously. OOS metrics are
     # derived by slicing this single run down to the test-period dates,
     # rather than rerunning each strategy separately on test alone — see
@@ -140,6 +144,19 @@ def main():
         results_full.append(result)
 
     results_test = [slice_result(r, test.index) for r in results_full]
+
+    def filtered_mu_from_strategy(strat_func) -> pd.DataFrame:
+        """The real mu_hat trajectory a Kalman strategy used, read directly
+        off its closure (regime-alpha switching included) rather than
+        rebuilt separately."""
+        return pd.DataFrame(
+            strat_func.filtered_history,
+            index=pd.DatetimeIndex(strat_func.filtered_index),
+            columns=returns.columns,
+        )
+
+    # Used by Step 5's plot_filtered_vs_rolling_mu calls below.
+    filtered_mu = filtered_mu_from_strategy(strategy_funcs["Kalman-Mu MV"])
 
     # Step 4: Evaluate
     print("\n=== STEP 4: Performance Metrics ===")
@@ -186,8 +203,7 @@ def main():
     dm_results_by_variant = {}
     forecast_errors_by_variant = {}
     for name in KALMAN_VARIANTS:
-        kf_variant = build_filter_from_training(train, q_scale=calibration[name]["q_best"])
-        filtered_mu_variant = kf_variant.filter_returns(returns)
+        filtered_mu_variant = filtered_mu_from_strategy(strategy_funcs[name])
 
         errors_kf, errors_roll = compute_forecast_errors(filtered_mu_variant, returns, window=60)
         forecast_errors_by_variant[name] = {"kalman": errors_kf, "rolling": errors_roll}
@@ -279,6 +295,7 @@ def main():
             forecast_errors_by_variant["Kalman-Mu MV"]["kalman"],
             forecast_errors_by_variant["Kalman-Mu MV"]["rolling"],
             asset=asset,
+            variant_name="Kalman-Mu MV",
         )
 
     # Diagnostic plots for Discussion section — using Kalman-Sigma's

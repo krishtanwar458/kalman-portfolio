@@ -25,10 +25,12 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
     daily_ret = result["daily_returns"]
     cumulative = result["cumulative"]
 
-    # Annualized return
-    total_return = cumulative.iloc[-1] / cumulative.iloc[0]
+    # Total growth multiplier — cumulative.iloc[-1] already equals prod(1+r_t).
+    # Do NOT divide by cumulative.iloc[0]: that's (1+r_0), not 1, so dividing
+    # by it silently drops the first day's return from every metric below.
+    total_growth = cumulative.iloc[-1]
     n_years = len(daily_ret) / trading_days
-    ann_return = total_return ** (1 / n_years) - 1
+    ann_return = total_growth ** (1 / n_years) - 1
 
     # Annualized volatility
     ann_vol = daily_ret.std() * np.sqrt(trading_days)
@@ -52,7 +54,7 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
         "Sharpe Ratio": f"{sharpe:.3f}",
         "Max Drawdown": f"{max_drawdown:.2%}",
         "Avg Turnover": f"{avg_turnover:.4f}",
-        "Total Return": f"{(total_return - 1):.2%}",
+        "Total Return": f"{(total_growth - 1):.2%}",
     }
 
 

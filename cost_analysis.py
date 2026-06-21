@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from config import TICKERS, RESULTS_DIR, PLOTS_DIR
 from data_loader import load_prices, compute_returns, split_data
 from backtest import run_backtest, slice_result
+from plots_extended import COLORS
 from benchmarks import (
     equal_weight_strategy,
     make_rolling_mv_strategy,
@@ -33,9 +34,11 @@ STRATEGY_ORDER = ["Equal Weight", "Rolling MV", "Static MV", "Ledoit-Wolf MV"] +
 
 def annualized_metrics(daily_returns: pd.Series) -> dict:
     cumulative = (1 + daily_returns).cumprod()
-    total_return = cumulative.iloc[-1] / cumulative.iloc[0]
+    total_growth = cumulative.iloc[-1]                   # = prod(1+r_t); NOT divided by
+                                                           # cumulative.iloc[0], which is
+                                                           # (1+r_0) and silently drops day 0
     n_years = len(daily_returns) / 252
-    ann_ret = total_return ** (1 / n_years) - 1          # CAGR — matches evaluation.py
+    ann_ret = total_growth ** (1 / n_years) - 1           # CAGR — matches evaluation.py
     ann_vol = daily_returns.std() * np.sqrt(252)
     sharpe  = ann_ret / ann_vol if ann_vol > 0 else 0.0
     max_dd  = ((cumulative - cumulative.cummax()) / cumulative.cummax()).min()
@@ -124,12 +127,6 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
     os.makedirs(PLOTS_DIR, exist_ok=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    colors = {
-        "Equal Weight": "#2ca02c", "Rolling MV": "#ff7f0e",
-        "Static MV": "#7f7f7f", "Ledoit-Wolf MV": "#9467bd",
-        "Kalman-Mu MV": "#1f77b4", "Kalman-Sigma MV": "#17becf",
-        "Kalman-Full MV": "#d62728",
-    }
     markers = {
         "Equal Weight": "o", "Rolling MV": "s",
         "Static MV": "D", "Ledoit-Wolf MV": "v",
@@ -141,12 +138,14 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
         sub = df[df["Strategy"] == strat]
         if sub.empty:
             continue
+        color = COLORS.get(strat, "#607D8B")
+        marker = markers.get(strat, "o")
         axes[0].plot(sub["Cost (bps)"], sub["Sharpe"],
-                     label=strat, color=colors[strat],
-                     marker=markers[strat], linewidth=2.5, markersize=7)
+                     label=strat, color=color,
+                     marker=marker, linewidth=2.5, markersize=7)
         axes[1].plot(sub["Cost (bps)"], sub["Ann. Return (%)"],
-                     label=strat, color=colors[strat],
-                     marker=markers[strat], linewidth=2.5, markersize=7)
+                     label=strat, color=color,
+                     marker=marker, linewidth=2.5, markersize=7)
 
     for ax, ylabel, title in zip(
         axes,

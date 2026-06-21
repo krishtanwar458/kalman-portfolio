@@ -1,0 +1,8 @@
+,DM_statistic,p_value,mean_loss_differential,n_observations,conclusion,loss_function,alternative
+EFA,6.643,1.0,0.00010181,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+GLD,9.9443,1.0,7.988e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+QQQ,6.9545,1.0,0.00013293,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+SPY,5.3227,1.0,9.296e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+TLT,11.3211,1.0,6.929e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+VNQ,5.11,1.0,0.00012298,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+OVERALL,6.6198,1.0,3.967e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
