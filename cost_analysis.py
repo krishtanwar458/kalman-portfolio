@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 from config import TICKERS, RESULTS_DIR, PLOTS_DIR
 from data_loader import load_prices, compute_returns, split_data
-from backtest import run_backtest
+from backtest import run_backtest, slice_result
 from benchmarks import (
     equal_weight_strategy,
     make_rolling_mv_strategy,
@@ -48,7 +48,8 @@ def annualized_metrics(daily_returns: pd.Series) -> dict:
 
 
 def run_sensitivity(
-    returns: pd.DataFrame,
+    full_returns: pd.DataFrame,
+    eval_index: pd.DatetimeIndex,
     train: pd.DataFrame,
     period_label: str = "Full",
     regime_labels: pd.Series = None,
@@ -56,8 +57,16 @@ def run_sensitivity(
     turnover_gamma: float = 0.0,
 ) -> pd.DataFrame:
     """
-    calibration must contain one entry per Kalman variant to be tested, e.g.
-    the `calibration` dict built in main.py's Step 2 (all three variants).
+    full_returns : the FULL combined train+test return series. The backtest
+                   always runs continuously over this, regardless of
+                   period_label, so stateful strategies (the Kalman variants)
+                   never have their internal state frozen mid-warm-up or
+                   cold-started at the OOS boundary.
+    eval_index   : the date range to report metrics over — e.g. the full
+                   index for "Full", or just the test-period index for "OOS".
+                   Reporting is just a slice of one continuous run.
+    calibration  : must contain one entry per Kalman variant to be tested,
+                   e.g. the `calibration` dict built in main.py's Step 2.
     """
     if calibration is None:
         calibration = {}
@@ -86,14 +95,11 @@ def run_sensitivity(
         ]
 
         for name, strat_func, effective_bps in strategies:
-            if name in calibration and period_label == "OOS":
-                # Warm up filter on training data before the OOS-only run
-                for i in range(len(train)):
-                    strat_func(train.index[i], train.iloc[:i + 1])
+            result = run_backtest(full_returns, strat_func, name=name, cost_bps=effective_bps)
+            sliced = slice_result(result, eval_index)
 
-            result = run_backtest(returns, strat_func, name=name, cost_bps=effective_bps)
-            m = annualized_metrics(result["daily_returns"])
-            avg_turnover = result["turnover_series"].mean() if len(result["turnover_series"]) > 0 else 0.0
+            m = annualized_metrics(sliced["daily_returns"])
+            avg_turnover = sliced["turnover_series"].mean() if len(sliced["turnover_series"]) > 0 else 0.0
             rows.append({
                 "Period":           period_label,
                 "Strategy":         name,
@@ -194,16 +200,16 @@ if __name__ == "__main__":
 
     # Full period
     print("\n=== Full Period ===")
-    df_full = run_sensitivity(returns, train, period_label="Full",
+    df_full = run_sensitivity(returns, returns.index, train, period_label="Full",
                                regime_labels=regime_labels, calibration=calibration,
                                turnover_gamma=turnover_gamma)
     print_sharpe_pivot(df_full, "Full")
     df_full.to_csv(f"{RESULTS_DIR}/cost_sensitivity.csv", index=False)
     plot_sensitivity(df_full, period_label="Full", filename="cost_sensitivity_full.png")
 
-    # OOS test period
+    # OOS test period — same continuous run, sliced to test.index
     print("\n=== OOS Test Period ===")
-    df_oos = run_sensitivity(test, train, period_label="OOS",
+    df_oos = run_sensitivity(returns, test.index, train, period_label="OOS",
                               regime_labels=regime_labels, calibration=calibration,
                               turnover_gamma=turnover_gamma)
     print_sharpe_pivot(df_oos, "OOS")

@@ -10,7 +10,7 @@ import numpy as np
 from config import TICKERS, REGIMES, RESULTS_DIR, PLOTS_DIR, Q_SCALE, TRAIN_START, TEST_END
 from data_loader import load_prices, compute_returns, split_data
 from kalman_filter import build_filter_from_training
-from backtest import run_backtest
+from backtest import run_backtest, slice_result
 from benchmarks import (
     equal_weight_strategy,
     make_rolling_mv_strategy,
@@ -91,6 +91,11 @@ def main():
 
         calibration[name] = {"q_best": q_best_v, "regime_alphas": regime_alphas_v, **flags}
 
+    print("\n  Calibration summary (verify these differ across variants):")
+    for name in KALMAN_VARIANTS:
+        c = calibration[name]
+        print(f"    {name}: q_best={c['q_best']:.3e}  alphas={c['regime_alphas']}")
+
     # Alias for Step 8b diagnostics, which still illustrate a single
     # ("headline") variant — Kalman-Sigma, the covariance-isolation design.
     q_best = calibration["Kalman-Sigma MV"]["q_best"]
@@ -124,37 +129,17 @@ def main():
         for name in KALMAN_VARIANTS
     ]
 
-    # Full period (train + test)
+    # Full period (train + test) — run ONCE, continuously. OOS metrics are
+    # derived by slicing this single run down to the test-period dates,
+    # rather than rerunning each strategy separately on test alone — see
+    # slice_result()'s docstring in backtest.py for why that approach
+    # silently breaks stateful strategies like the Kalman variants.
     results_full = []
     for name, strat_func in strategies:
         result = run_backtest(returns, strat_func, name=name)
         results_full.append(result)
 
-    # Test period only (out-of-sample) — rebuild every stateful strategy fresh
-    results_test = []
-    for name, strat_func in strategies:
-        if name == "Rolling MV":
-            strat_func = make_rolling_mv_strategy(turnover_gamma=turnover_gamma)
-        elif name == "Ledoit-Wolf MV":
-            strat_func = make_ledoit_wolf_strategy(turnover_gamma=turnover_gamma)
-        elif name == "Static MV":
-            strat_func = make_static_mv_strategy(train)
-        elif name in KALMAN_VARIANTS:
-            strat_func = make_kalman_strategy(
-                train,
-                q_scale=calibration[name]["q_best"],
-                regime_labels=regime_labels,
-                regime_alphas=calibration[name]["regime_alphas"],
-                turnover_gamma=turnover_gamma,
-                use_filtered_mu=calibration[name]["use_filtered_mu"],
-                use_filtered_sigma=calibration[name]["use_filtered_sigma"],
-            )
-            # Warm up filter on training data before test period
-            for i in range(len(train)):
-                strat_func(train.index[i], returns.iloc[:len(train)])
-
-        result = run_backtest(test, strat_func, name=name)
-        results_test.append(result)
+    results_test = [slice_result(r, test.index) for r in results_full]
 
     # Step 4: Evaluate
     print("\n=== STEP 4: Performance Metrics ===")
@@ -194,22 +179,60 @@ def main():
     # Step 6: Statistical Significance Tests
     print("\n=== STEP 6: Statistical Significance Tests ===")
 
-    from statistical_tests import run_all_tests
+    from statistical_tests import compute_forecast_errors, diebold_mariano_test, bootstrap_sharpe_comparison
 
-    stat_results = run_all_tests(
-        results=results_full,
-        filtered_mu=filtered_mu,
-        returns=returns,
-        rolling_window=60,
-        n_bootstrap=1000,
-    )
+    # DM test — once PER Kalman variant, since each has its own Q* and
+    # therefore its own filtered mean series. Cheap, so doing this 3x is fine.
+    dm_results_by_variant = {}
+    forecast_errors_by_variant = {}
+    for name in KALMAN_VARIANTS:
+        kf_variant = build_filter_from_training(train, q_scale=calibration[name]["q_best"])
+        filtered_mu_variant = kf_variant.filter_returns(returns)
 
-    stat_results["sharpe_cis"].to_csv(f"{RESULTS_DIR}/sharpe_confidence_intervals.csv")
+        errors_kf, errors_roll = compute_forecast_errors(filtered_mu_variant, returns, window=60)
+        forecast_errors_by_variant[name] = {"kalman": errors_kf, "rolling": errors_roll}
+
+        dm_results = {}
+        for asset in errors_kf.columns:
+            dm_results[asset] = diebold_mariano_test(
+                errors_kf[asset], errors_roll[asset], loss="squared", alternative="less"
+            )
+        e_kf_agg = errors_kf.mean(axis=1)
+        e_roll_agg = errors_roll.mean(axis=1)
+        dm_results["OVERALL"] = diebold_mariano_test(e_kf_agg, e_roll_agg, loss="squared", alternative="less")
+        dm_results_by_variant[name] = dm_results
+
+        print(f"\n  [{name}] DM test (Q*={calibration[name]['q_best']:.3e}):")
+        for asset, dm in dm_results.items():
+            print(f"    {asset}: DM={dm['DM_statistic']:+.3f}, p={dm['p_value']:.3f}")
+
+        dm_df = pd.DataFrame(dm_results).T
+        dm_df.to_csv(f"{RESULTS_DIR}/diebold_mariano_results_{name.replace(' ', '_').replace('-', '_')}.csv")
+
+    print(f"\n  DM test results saved to {RESULTS_DIR}/ (one file per variant)")
+
+    # Bootstrap Sharpe CIs — computed ONCE. Only depends on results_full,
+    # not on filtered_mu, so it doesn't need to be repeated per variant.
+    print(f"\n  Block Bootstrap Sharpe Ratio Confidence Intervals (n_bootstrap=1000)")
+    sharpe_cis = bootstrap_sharpe_comparison(results_full, n_bootstrap=1000)
+    print(f"\n{sharpe_cis.to_string()}")
+    sharpe_cis.to_csv(f"{RESULTS_DIR}/sharpe_confidence_intervals.csv")
     print(f"\n  Sharpe CI table saved to {RESULTS_DIR}/sharpe_confidence_intervals.csv")
 
-    dm_df = pd.DataFrame(stat_results["dm_results"]).T
-    dm_df.to_csv(f"{RESULTS_DIR}/diebold_mariano_results.csv")
-    print(f"  DM test results saved to {RESULTS_DIR}/diebold_mariano_results.csv")
+    if "Rolling MV" in sharpe_cis.index:
+        rolling_row = sharpe_cis.loc["Rolling MV"]
+        print("\n  CI Interpretation (vs Rolling MV):")
+        for name in KALMAN_VARIANTS:
+            if name not in sharpe_cis.index:
+                continue
+            row = sharpe_cis.loc[name]
+            if row["95% CI Lower"] > rolling_row["95% CI Upper"]:
+                verdict = "statistically superior to Rolling MV"
+            elif row["95% CI Upper"] > rolling_row["95% CI Upper"]:
+                verdict = "higher point estimate, not statistically conclusive"
+            else:
+                verdict = "no significant difference from Rolling MV"
+            print(f"    {name}: {verdict}")
 
     # Step 7: Regime-Conditional Performance Analysis
     print("\n=== STEP 7: Regime-Conditional Performance Analysis ===")
@@ -243,7 +266,7 @@ def main():
     # Step 8: Extended Plots
     print("\n=== STEP 8: Extended Plots ===")
 
-    plot_sharpe_confidence_intervals(stat_results["sharpe_cis"])
+    plot_sharpe_confidence_intervals(sharpe_cis)
     plot_regime_performance(sharpe_by_regime)
     for name, adv in advantage_tables.items():
         plot_kalman_advantage_by_regime(adv)
@@ -253,8 +276,8 @@ def main():
 
     for asset in ["SPY", "TLT"]:
         plot_forecast_error_comparison(
-            stat_results["forecast_errors"]["kalman"],
-            stat_results["forecast_errors"]["rolling"],
+            forecast_errors_by_variant["Kalman-Mu MV"]["kalman"],
+            forecast_errors_by_variant["Kalman-Mu MV"]["rolling"],
             asset=asset,
         )
 
@@ -292,7 +315,7 @@ def main():
     from cost_analysis import run_sensitivity, plot_sensitivity, print_sharpe_pivot
 
     df_costs_full = run_sensitivity(
-        returns, train, period_label="Full",
+        returns, returns.index, train, period_label="Full",
         regime_labels=regime_labels, calibration=calibration,
         turnover_gamma=turnover_gamma,
     )
@@ -301,7 +324,7 @@ def main():
     plot_sensitivity(df_costs_full, period_label="Full", filename="cost_sensitivity_full.png")
 
     df_costs_oos = run_sensitivity(
-        test, train, period_label="OOS",
+        returns, test.index, train, period_label="OOS",
         regime_labels=regime_labels, calibration=calibration,
         turnover_gamma=turnover_gamma,
     )

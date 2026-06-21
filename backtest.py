@@ -72,3 +72,41 @@ def run_backtest(
         "name": name,
         "cost_bps": cost_bps,
     }
+
+
+def slice_result(result: dict, period_index: pd.DatetimeIndex) -> dict:
+    """
+    Slice a run_backtest() result down to a specific date range, recomputing
+    cumulative wealth from scratch within that window (compounding restarts
+    at $1 on the first date of the window, rather than inheriting wealth
+    accumulated before it).
+
+    Use this to extract out-of-sample performance from a backtest run
+    continuously over a longer period (e.g. train+test combined), instead of
+    rerunning a strategy separately on the test period alone. For stateful
+    strategies (e.g. Kalman filters tracking an internal day-count), a
+    separate from-scratch OOS run either needs a manual warm-up loop — which
+    can silently leave the strategy's internal state frozen at its
+    end-of-warm-up snapshot if the warm-up and evaluation calls don't agree
+    on what "how many days have been processed" means — or it cold-starts
+    with no trailing window at all. Running once, continuously, and slicing
+    afterward avoids both failure modes for every strategy uniformly.
+    """
+    idx = result["daily_returns"].index.intersection(period_index)
+
+    daily = result["daily_returns"].loc[idx]
+    cumulative = (1 + daily).cumprod()
+
+    weights = (result["weights_history"].loc[result["weights_history"].index.intersection(period_index)]
+               if not result["weights_history"].empty else result["weights_history"])
+    turnover = (result["turnover_series"].loc[result["turnover_series"].index.intersection(period_index)]
+                if not result["turnover_series"].empty else result["turnover_series"])
+
+    return {
+        "daily_returns": daily,
+        "cumulative": cumulative,
+        "weights_history": weights,
+        "turnover_series": turnover,
+        "name": result["name"],
+        "cost_bps": result["cost_bps"],
+    }
