@@ -1,11 +1,9 @@
 """
 q_calibration.py — Walk-forward cross-validation to select Q_SCALE and regime alphas.
 
-UPDATED: validation now scores each candidate using the same mechanism as
-make_kalman_strategy — mu = rolling mean of RAW returns (constant w.r.t. Q),
-sigma = covariance of the FILTERED return series. Previously this scored
-candidates using the filtered mean fed directly to the optimizer against a
-static covariance matrix, which no longer matches production.
+Generalized with use_filtered_mu / use_filtered_sigma flags so that each of the
+three Kalman variants (Kalman-Mu, Kalman-Sigma, Kalman-Full) gets its Q* and
+regime alphas selected against its OWN mechanism, not a shared proxy.
 
 No test data is ever touched.
 """
@@ -26,13 +24,15 @@ def select_q_cv(
     val_fraction: float = 0.30,
     cov_window: int = COV_WINDOW,
     ret_window: int = RETURN_WINDOW,
+    use_filtered_mu: bool = False,
+    use_filtered_sigma: bool = True,
     verbose: bool = True,
+    label: str = "",
 ) -> tuple:
     """
     Select Q_SCALE via walk-forward CV on training data.
-    Criterion: annualized Sharpe of Kalman MV portfolio on validation window,
-    using mu = rolling mean of raw returns, sigma = covariance of filtered returns
-    (matches make_kalman_strategy).
+    Criterion: annualized Sharpe of the portfolio on the validation window,
+    scored using the SAME mu/sigma mechanism as the target strategy variant.
     """
     from optimizer import optimize_portfolio
 
@@ -45,12 +45,13 @@ def select_q_cv(
 
     R   = np.cov(Y.T) + np.eye(n) * 1e-6
     mu0 = Y_warm.mean(axis=0)
+    buf_len = max(cov_window, ret_window)
 
     rows = []
     for q in q_grid:
         Q_mat = q * np.eye(n)
 
-        # Warmup pass — collect filtered history for the cov_window buffer
+        # Warmup pass — collect filtered history regardless of which mechanism is used
         P  = R.copy()
         mu = mu0.copy()
         filtered_warm = np.zeros((len(Y_warm), n))
@@ -67,18 +68,26 @@ def select_q_cv(
         mu_val = mu.copy()
         P_val  = P.copy()
 
-        raw_buffer  = list(Y_warm[-ret_window:])
-        filt_buffer = list(filtered_warm[-cov_window:])
+        raw_buffer  = list(Y_warm[-buf_len:])
+        filt_buffer = list(filtered_warm[-buf_len:])
 
         port_returns = []
         current_weights = np.ones(n) / n
         rebal_counter = 0
 
         for t in range(len(Y_val)):
-            if rebal_counter % 21 == 0 and len(filt_buffer) >= cov_window:
+            if rebal_counter % 21 == 0 and len(filt_buffer) >= buf_len:
                 try:
-                    mu_t    = np.mean(raw_buffer[-ret_window:], axis=0)
-                    sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                    if use_filtered_mu:
+                        mu_t = mu_val.copy()
+                    else:
+                        mu_t = np.mean(raw_buffer[-ret_window:], axis=0)
+
+                    if use_filtered_sigma:
+                        sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                    else:
+                        sigma_t = np.cov(np.array(raw_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+
                     w = optimize_portfolio(mu_t, sigma_t)
                     if w is not None and not np.any(np.isnan(w)):
                         current_weights = w
@@ -108,12 +117,13 @@ def select_q_cv(
     best_q  = float(results["Val_Sharpe"].idxmax())
 
     if verbose:
-        print("\n── Q Grid Search Results (training CV, criterion = Sharpe) ──")
+        tag = f" [{label}]" if label else ""
+        print(f"\n── Q Grid Search Results{tag} (training CV, criterion = Sharpe) ──")
         print(f"{'Q_SCALE':>12}  {'Val Sharpe':>12}")
         for q, row in results.iterrows():
             marker = "  ← best" if q == best_q else ""
             print(f"  {q:12.2e}  {row['Val_Sharpe']:12.6f}{marker}")
-        print(f"\n  Selected Q_SCALE = {best_q:.4e}")
+        print(f"\n  Selected Q_SCALE{tag} = {best_q:.4e}")
 
     return best_q, results
 
@@ -133,15 +143,18 @@ def _run_regime_validation(
     regime_alphas: dict,
     cov_window: int = COV_WINDOW,
     ret_window: int = RETURN_WINDOW,
+    use_filtered_mu: bool = False,
+    use_filtered_sigma: bool = True,
 ) -> float:
     """
-    Run one validation pass with a given set of regime alphas.
-    mu = rolling mean of raw returns, sigma = covariance of filtered returns
-    (matches make_kalman_strategy). CRISIS always uses 1.0 (base Q).
+    Run one validation pass with a given set of regime alphas, scored using
+    the same mu/sigma mechanism as the target strategy variant.
+    CRISIS always uses 1.0 (base Q).
     """
     from optimizer import optimize_portfolio
 
     n = Y_warm.shape[1]
+    buf_len = max(cov_window, ret_window)
 
     Q_map = {regime: regime_alphas.get(regime, 1.0) * Q_base
              for regime in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]}
@@ -162,8 +175,8 @@ def _run_regime_validation(
     # Validation pass — regime-switching Q
     mu_val = mu.copy()
     P_val = P.copy()
-    raw_buffer  = list(Y_warm[-ret_window:])
-    filt_buffer = list(filtered_warm[-cov_window:])
+    raw_buffer  = list(Y_warm[-buf_len:])
+    filt_buffer = list(filtered_warm[-buf_len:])
     port_returns = []
     current_weights = np.ones(n) / n
     rebal_counter = 0
@@ -174,10 +187,18 @@ def _run_regime_validation(
                    else (regime_labels.loc[date_t] if date_t in regime_labels.index else "MED_VOL")
         Q_t = Q_map.get(regime_t, Q_base)
 
-        if rebal_counter % 21 == 0 and len(filt_buffer) >= cov_window:
+        if rebal_counter % 21 == 0 and len(filt_buffer) >= buf_len:
             try:
-                mu_t    = np.mean(raw_buffer[-ret_window:], axis=0)
-                sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                if use_filtered_mu:
+                    mu_t = mu_val.copy()
+                else:
+                    mu_t = np.mean(raw_buffer[-ret_window:], axis=0)
+
+                if use_filtered_sigma:
+                    sigma_t = np.cov(np.array(filt_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+                else:
+                    sigma_t = np.cov(np.array(raw_buffer[-cov_window:]).T) + np.eye(n) * 1e-8
+
                 w = optimize_portfolio(mu_t, sigma_t)
                 if w is not None and not np.any(np.isnan(w)):
                     current_weights = w
@@ -209,13 +230,15 @@ def calibrate_regime_alphas(
     q_best: float,
     alpha_grid: list = ALPHA_GRID,
     val_fraction: float = 0.30,
+    use_filtered_mu: bool = False,
+    use_filtered_sigma: bool = True,
     verbose: bool = True,
+    label: str = "",
 ) -> tuple:
     """
     Calibrate per-regime Q attenuation factors for LOW_VOL, MED_VOL, HIGH_VOL.
     CRISIS is always fixed at base Q (alpha = 1.0) — too few days to calibrate.
-    Greedy sequential search, same as before; scoring mechanism updated to
-    match make_kalman_strategy (see _run_regime_validation).
+    Greedy sequential search; scoring mechanism set by use_filtered_mu/use_filtered_sigma.
     """
     Y = train_returns.values
     T, n = Y.shape
@@ -232,14 +255,16 @@ def calibrate_regime_alphas(
     all_results = {}
 
     if verbose:
-        print("\n── Per-Regime Alpha Calibration (greedy sequential, criterion = Val Sharpe) ──")
+        tag = f" [{label}]" if label else ""
+        print(f"\n── Per-Regime Alpha Calibration{tag} (greedy sequential, criterion = Val Sharpe) ──")
 
     for regime in REGIMES_TO_TUNE:
         rows = []
         for alpha in alpha_grid:
             trial_alphas = {**current_alphas, regime: alpha}
             sharpe = _run_regime_validation(
-                Y_warm, Y_val, dates_val, regime_labels, R, Q_base, trial_alphas
+                Y_warm, Y_val, dates_val, regime_labels, R, Q_base, trial_alphas,
+                use_filtered_mu=use_filtered_mu, use_filtered_sigma=use_filtered_sigma,
             )
             rows.append({"alpha": alpha, "Val_Sharpe": sharpe})
 
@@ -257,10 +282,11 @@ def calibrate_regime_alphas(
             print(f"  → Selected alpha = {best_alpha:.3f}  (Q = {best_alpha:.3f} × Q_base)")
 
     if verbose:
-        print("\n── Final Regime Alphas ──")
+        tag = f" [{label}]" if label else ""
+        print(f"\n── Final Regime Alphas{tag} ──")
         for regime, alpha in current_alphas.items():
-            tag = "(fixed)" if regime == "CRISIS" else ""
-            print(f"  {regime:<12} alpha = {alpha:.3f}  {tag}")
+            ctag = "(fixed)" if regime == "CRISIS" else ""
+            print(f"  {regime:<12} alpha = {alpha:.3f}  {ctag}")
 
     return current_alphas, all_results
 

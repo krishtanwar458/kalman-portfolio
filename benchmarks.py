@@ -3,14 +3,6 @@ benchmarks.py — Strategy definitions for backtesting.
 
 Each strategy is a function with signature:
     strategy(date, returns_so_far) -> np.ndarray of weights
-
-Usage:
-    from benchmarks import (
-        equal_weight_strategy,
-        rolling_mv_strategy,
-        static_mv_strategy,
-        kalman_strategy,
-    )
 """
 
 import numpy as np
@@ -28,10 +20,9 @@ def equal_weight_strategy(date, returns_so_far):
     return np.ones(n) / n
 
 
-# 2. Rolling Mean-Variance 
+# 2. Rolling Mean-Variance
 
 def make_rolling_mv_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW, turnover_gamma=0.0):
-    n_assets = [None]
     w_prev = [None]
 
     def strategy(date, returns_so_far):
@@ -51,13 +42,9 @@ def make_rolling_mv_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW, tu
     return strategy
 
 
-# 3. Static Mean-Variance 
+# 3. Static Mean-Variance
 
 def make_static_mv_strategy(train_returns: pd.DataFrame):
-    """
-    Factory: creates a static strategy using estimates computed once
-    from the training period. Never updates.
-    """
     mu_static = train_returns.mean().values
     sigma_static = train_returns.cov().values
     weights_static = optimize_portfolio(mu_static, sigma_static)
@@ -68,7 +55,11 @@ def make_static_mv_strategy(train_returns: pd.DataFrame):
     return strategy
 
 
-# 4. Kalman Filter Strategy 
+# 4. Kalman Filter Strategy — generalized to 3 variants via flags
+#
+#    use_filtered_mu=False, use_filtered_sigma=True   -> Kalman-Sigma MV (covariance-isolation design)
+#    use_filtered_mu=True,  use_filtered_sigma=False  -> Kalman-Mu MV    (mean-isolation design)
+#    use_filtered_mu=True,  use_filtered_sigma=True   -> Kalman-Full MV  (both adaptive)
 
 def make_kalman_strategy(
     train_returns: pd.DataFrame,
@@ -78,6 +69,8 @@ def make_kalman_strategy(
     regime_labels: pd.Series = None,
     regime_alphas: dict = None,
     turnover_gamma: float = 0.0,
+    use_filtered_mu: bool = False,
+    use_filtered_sigma: bool = True,
 ):
     n_assets = train_returns.shape[1]
     R = train_returns.cov().values
@@ -118,16 +111,22 @@ def make_kalman_strategy(
             w_prev[0] = np.ones(n) / n
             return w_prev[0]
 
-        # Return estimate: same 60-day rolling mean of raw returns as Rolling MV
-        mu = returns_so_far.iloc[-ret_window:].mean().values
+        # Return estimate
+        if use_filtered_mu:
+            mu = kf.mu_hat.copy()
+        else:
+            mu = returns_so_far.iloc[-ret_window:].mean().values
 
-        # Covariance estimate: built from the Kalman-filtered return series
-        filtered_recent = pd.DataFrame(
-            filtered_history[-cov_window:],
-            index=filtered_index[-cov_window:],
-            columns=returns_so_far.columns,
-        )
-        sigma = filtered_recent.cov().values
+        # Covariance estimate
+        if use_filtered_sigma:
+            filtered_recent = pd.DataFrame(
+                filtered_history[-cov_window:],
+                index=filtered_index[-cov_window:],
+                columns=returns_so_far.columns,
+            )
+            sigma = filtered_recent.cov().values
+        else:
+            sigma = returns_so_far.iloc[-cov_window:].cov().values
 
         w = optimize_portfolio(mu, sigma, w_prev=w_prev[0], turnover_gamma=turnover_gamma)
         w_prev[0] = w.copy()
@@ -138,7 +137,7 @@ def make_kalman_strategy(
 
 from sklearn.covariance import LedoitWolf
 
-# 5. Ledoit-Wolf Shrinkage Mean-Variance
+# 5. Ledoit-Wolf Shrinkage Mean-Variance — unaffected by the mu/sigma ablation above
 
 def make_ledoit_wolf_strategy(cov_window=COV_WINDOW, ret_window=RETURN_WINDOW, turnover_gamma=0.0):
     w_prev = [None]

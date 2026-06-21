@@ -13,10 +13,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import config
 from config import TICKERS, RESULTS_DIR, PLOTS_DIR
 from data_loader import load_prices, compute_returns, split_data
-from kalman_filter import build_filter_from_training
 from backtest import run_backtest
 from benchmarks import (
     equal_weight_strategy,
@@ -28,7 +26,9 @@ from benchmarks import (
 
 COST_LEVELS_BPS = [0, 5, 10, 20]
 
-STRATEGY_ORDER = ["Equal Weight", "Rolling MV", "Static MV", "Ledoit-Wolf MV", "Kalman MV"]
+KALMAN_VARIANT_NAMES = ["Kalman-Mu MV", "Kalman-Sigma MV", "Kalman-Full MV"]
+
+STRATEGY_ORDER = ["Equal Weight", "Rolling MV", "Static MV", "Ledoit-Wolf MV"] + KALMAN_VARIANT_NAMES
 
 
 def annualized_metrics(daily_returns: pd.Series) -> dict:
@@ -52,32 +52,44 @@ def run_sensitivity(
     train: pd.DataFrame,
     period_label: str = "Full",
     regime_labels: pd.Series = None,
-    regime_alphas: dict = None,
+    calibration: dict = None,   # {variant_name: {"q_best", "regime_alphas", "use_filtered_mu", "use_filtered_sigma"}}
     turnover_gamma: float = 0.0,
 ) -> pd.DataFrame:
+    """
+    calibration must contain one entry per Kalman variant to be tested, e.g.
+    the `calibration` dict built in main.py's Step 2 (all three variants).
+    """
+    if calibration is None:
+        calibration = {}
+
     rows = []
 
     for bps in COST_LEVELS_BPS:
         strategies = [
-            ("Equal Weight", equal_weight_strategy,                           0.0),
-            ("Rolling MV",   make_rolling_mv_strategy(
-                                turnover_gamma=turnover_gamma),               bps),
-            ("Static MV",    make_static_mv_strategy(train),                  0.0),
+            ("Equal Weight",   equal_weight_strategy,                          0.0),
+            ("Rolling MV",     make_rolling_mv_strategy(
+                                    turnover_gamma=turnover_gamma),             bps),
+            ("Static MV",      make_static_mv_strategy(train),                 0.0),
             ("Ledoit-Wolf MV", make_ledoit_wolf_strategy(
-                                turnover_gamma=turnover_gamma),               bps),
-            ("Kalman MV",    make_kalman_strategy(
-                                train,
-                                q_scale=config.Q_SCALE,
-                                regime_labels=regime_labels,
-                                regime_alphas=regime_alphas,
-                                turnover_gamma=turnover_gamma,
-                             ),                                               bps),
+                                    turnover_gamma=turnover_gamma),             bps),
+        ] + [
+            (name, make_kalman_strategy(
+                        train,
+                        q_scale=calibration[name]["q_best"],
+                        regime_labels=regime_labels,
+                        regime_alphas=calibration[name]["regime_alphas"],
+                        turnover_gamma=turnover_gamma,
+                        use_filtered_mu=calibration[name]["use_filtered_mu"],
+                        use_filtered_sigma=calibration[name]["use_filtered_sigma"],
+                    ), bps)
+            for name in calibration
         ]
 
         for name, strat_func, effective_bps in strategies:
-            if name == "Kalman MV" and period_label == "OOS":
+            if name in calibration and period_label == "OOS":
+                # Warm up filter on training data before the OOS-only run
                 for i in range(len(train)):
-                    strat_func(train.index[i], train.iloc[:i+1])
+                    strat_func(train.index[i], train.iloc[:i + 1])
 
             result = run_backtest(returns, strat_func, name=name, cost_bps=effective_bps)
             m = annualized_metrics(result["daily_returns"])
@@ -92,6 +104,7 @@ def run_sensitivity(
 
     return pd.DataFrame(rows)
 
+
 def print_sharpe_pivot(df: pd.DataFrame, period_label: str = ""):
     pivot = df.pivot_table(index="Strategy", columns="Cost (bps)", values="Sharpe").reindex(STRATEGY_ORDER)
     print(f"\n── Sharpe Ratio by Strategy and Cost [{period_label}] ──")
@@ -105,15 +118,23 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
     os.makedirs(PLOTS_DIR, exist_ok=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    colors  = {"Equal Weight": "#2ca02c", "Rolling MV": "#ff7f0e",
-                "Static MV": "#7f7f7f", "Ledoit-Wolf MV": "#9467bd",
-                "Kalman MV":  "#1f77b4"}
-    markers = {"Equal Weight": "o", "Rolling MV": "s",
-                "Static MV": "D", "Ledoit-Wolf MV": "v",
-                "Kalman MV": "^"}
+    colors = {
+        "Equal Weight": "#2ca02c", "Rolling MV": "#ff7f0e",
+        "Static MV": "#7f7f7f", "Ledoit-Wolf MV": "#9467bd",
+        "Kalman-Mu MV": "#1f77b4", "Kalman-Sigma MV": "#17becf",
+        "Kalman-Full MV": "#d62728",
+    }
+    markers = {
+        "Equal Weight": "o", "Rolling MV": "s",
+        "Static MV": "D", "Ledoit-Wolf MV": "v",
+        "Kalman-Mu MV": "^", "Kalman-Sigma MV": "P",
+        "Kalman-Full MV": "X",
+    }
 
     for strat in STRATEGY_ORDER:
         sub = df[df["Strategy"] == strat]
+        if sub.empty:
+            continue
         axes[0].plot(sub["Cost (bps)"], sub["Sharpe"],
                      label=strat, color=colors[strat],
                      marker=markers[strat], linewidth=2.5, markersize=7)
@@ -130,7 +151,7 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
         ax.set_ylabel(ylabel, fontsize=12)
         ax.set_title(title, fontsize=13, fontweight="bold")
         ax.set_xticks(COST_LEVELS_BPS)
-        ax.legend(fontsize=10)
+        ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
 
     plt.suptitle(f"Transaction Cost Sensitivity — {period_label} Period", fontsize=14, y=1.02)
@@ -142,6 +163,7 @@ def plot_sensitivity(df: pd.DataFrame, period_label: str = "Full", filename: str
 
 
 if __name__ == "__main__":
+    # Standalone runner — builds its own calibration since main.py wasn't run first.
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
     print("=== Loading data ===")
@@ -149,16 +171,41 @@ if __name__ == "__main__":
     returns = compute_returns(prices)
     train, test = split_data(returns)
 
+    from q_calibration import select_q_cv, calibrate_regime_alphas
+    from regime_detector import classify_regimes
+
+    regime_labels = classify_regimes(returns, window=21, crisis_threshold=2.0, reference_returns=train)
+    regime_labels_train = regime_labels.reindex(train.index)
+
+    variant_flags = {
+        "Kalman-Mu MV":    dict(use_filtered_mu=True,  use_filtered_sigma=False),
+        "Kalman-Sigma MV": dict(use_filtered_mu=False, use_filtered_sigma=True),
+        "Kalman-Full MV":  dict(use_filtered_mu=True,  use_filtered_sigma=True),
+    }
+
+    calibration = {}
+    for name, flags in variant_flags.items():
+        q_best_v, _ = select_q_cv(train, verbose=False, label=name, **flags)
+        alphas_v, _ = calibrate_regime_alphas(train, regime_labels_train, q_best_v,
+                                               verbose=False, label=name, **flags)
+        calibration[name] = {"q_best": q_best_v, "regime_alphas": alphas_v, **flags}
+
+    turnover_gamma = 0.00005
+
     # Full period
     print("\n=== Full Period ===")
-    df_full = run_sensitivity(returns, train, period_label="Full")
+    df_full = run_sensitivity(returns, train, period_label="Full",
+                               regime_labels=regime_labels, calibration=calibration,
+                               turnover_gamma=turnover_gamma)
     print_sharpe_pivot(df_full, "Full")
     df_full.to_csv(f"{RESULTS_DIR}/cost_sensitivity.csv", index=False)
     plot_sensitivity(df_full, period_label="Full", filename="cost_sensitivity_full.png")
 
     # OOS test period
     print("\n=== OOS Test Period ===")
-    df_oos = run_sensitivity(test, train, period_label="OOS")
+    df_oos = run_sensitivity(test, train, period_label="OOS",
+                              regime_labels=regime_labels, calibration=calibration,
+                              turnover_gamma=turnover_gamma)
     print_sharpe_pivot(df_oos, "OOS")
     df_oos.to_csv(f"{RESULTS_DIR}/cost_sensitivity_oos.csv", index=False)
     plot_sensitivity(df_oos, period_label="OOS", filename="cost_sensitivity_oos.png")

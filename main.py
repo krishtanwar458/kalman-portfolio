@@ -37,6 +37,15 @@ for ticker in tickers:
     ann_vol = returns[ticker].std() * np.sqrt(252)
     print(f"{ticker}: Return={ann_ret:.2%}, Vol={ann_vol:.2%}")
 
+
+# The three Kalman variants under test — each isolates a different input.
+KALMAN_VARIANTS = {
+    "Kalman-Mu MV":    dict(use_filtered_mu=True,  use_filtered_sigma=False),  # mean-isolation
+    "Kalman-Sigma MV": dict(use_filtered_mu=False, use_filtered_sigma=True),   # covariance-isolation
+    "Kalman-Full MV":  dict(use_filtered_mu=True,  use_filtered_sigma=True),   # both adaptive
+}
+
+
 def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(PLOTS_DIR, exist_ok=True)
@@ -47,7 +56,7 @@ def main():
     returns = compute_returns(prices)
     train, test = split_data(returns)
 
-    # Step 2: Calibrate Q + Per-Regime Alphas
+    # Step 2: Calibrate Q + Per-Regime Alphas — one set PER Kalman variant
     print("\n=== STEP 2: Calibrating Kalman Filter (Walk-Forward CV) ===")
 
     from q_calibration import select_q_cv, plot_q_selection, calibrate_regime_alphas
@@ -59,51 +68,60 @@ def main():
         kalman_outperformance_by_regime,
     )
 
-    # Calibrate base Q on training data
-    q_best, q_results = select_q_cv(train, verbose=True)
-    plot_q_selection(q_results, q_best, save_path=f"{PLOTS_DIR}/q_selection.png")
-    print(f"\n  CV-selected Q_SCALE = {q_best:.4e}")
-
-    # Sync config
-    import config
-    config.Q_SCALE = q_best
-
     # Compute regime labels on full returns (no lookahead — uses past vol only)
     regime_labels = classify_regimes(returns, window=21, crisis_threshold=2.0,
-                                  reference_returns=train)
-
-    # Calibrate per-regime alphas using training regime labels only
-    # CRISIS is fixed at base Q (alpha=1.0) — too few days to calibrate reliably
+                                      reference_returns=train)
     regime_labels_train = regime_labels.reindex(train.index)
-    regime_alphas, alpha_results = calibrate_regime_alphas(
-        train, regime_labels_train, q_best, verbose=True
-    )
-    print(f"\n  CV-selected regime alphas: {regime_alphas}")
 
-    # Sync config
-    config.Q_REGIME_ALPHAS = regime_alphas
-    
     turnover_gamma = 0.00005  # starting value, tune later
 
-    # Build filter for plotting purposes
-    kf_for_plot = build_filter_from_training(train, q_scale=q_best)
+    calibration = {}
+    for name, flags in KALMAN_VARIANTS.items():
+        q_best_v, q_results_v = select_q_cv(train, verbose=True, label=name, **flags)
+        plot_q_selection(
+            q_results_v, q_best_v,
+            save_path=f"{PLOTS_DIR}/q_selection_{name.replace(' ', '_').replace('-', '_')}.png",
+        )
+        print(f"\n  CV-selected Q_SCALE [{name}] = {q_best_v:.4e}")
+
+        regime_alphas_v, alpha_results_v = calibrate_regime_alphas(
+            train, regime_labels_train, q_best_v, verbose=True, label=name, **flags
+        )
+        print(f"  CV-selected regime alphas [{name}]: {regime_alphas_v}")
+
+        calibration[name] = {"q_best": q_best_v, "regime_alphas": regime_alphas_v, **flags}
+
+    # Alias for Step 8b diagnostics, which still illustrate a single
+    # ("headline") variant — Kalman-Sigma, the covariance-isolation design.
+    q_best = calibration["Kalman-Sigma MV"]["q_best"]
+    regime_alphas = calibration["Kalman-Sigma MV"]["regime_alphas"]
+
+    # Build filter for the DM test / plotting — using Kalman-Mu's Q*, since the
+    # DM test measures forecast accuracy of the filtered MEAN, and Kalman-Mu is
+    # the variant whose calibration objective is actually about mean quality.
+    q_best_for_dm = calibration["Kalman-Mu MV"]["q_best"]
+    kf_for_plot = build_filter_from_training(train, q_scale=q_best_for_dm)
     filtered_mu = kf_for_plot.filter_returns(returns)
 
     # Step 3: Run Backtests
     print("\n=== STEP 3: Running Backtests ===")
 
     strategies = [
-        ("Equal Weight", equal_weight_strategy),
-        ("Rolling MV",   make_rolling_mv_strategy(turnover_gamma=turnover_gamma)),
-        ("Static MV",    make_static_mv_strategy(train)),
-        ("Ledoit-Wolf MV", make_ledoit_wolf_strategy(turnover_gamma=turnover_gamma)),  # add this
-        ("Kalman MV",    make_kalman_strategy(
-                            train,
-                            q_scale=q_best,
-                            regime_labels=regime_labels,
-                            regime_alphas=regime_alphas,
-                            turnover_gamma=turnover_gamma,
-                        )),
+        ("Equal Weight",   equal_weight_strategy),
+        ("Rolling MV",     make_rolling_mv_strategy(turnover_gamma=turnover_gamma)),
+        ("Static MV",      make_static_mv_strategy(train)),
+        ("Ledoit-Wolf MV", make_ledoit_wolf_strategy(turnover_gamma=turnover_gamma)),
+    ] + [
+        (name, make_kalman_strategy(
+            train,
+            q_scale=calibration[name]["q_best"],
+            regime_labels=regime_labels,
+            regime_alphas=calibration[name]["regime_alphas"],
+            turnover_gamma=turnover_gamma,
+            use_filtered_mu=calibration[name]["use_filtered_mu"],
+            use_filtered_sigma=calibration[name]["use_filtered_sigma"],
+        ))
+        for name in KALMAN_VARIANTS
     ]
 
     # Full period (train + test)
@@ -112,7 +130,7 @@ def main():
         result = run_backtest(returns, strat_func, name=name)
         results_full.append(result)
 
-    # Test period only (out-of-sample)
+    # Test period only (out-of-sample) — rebuild every stateful strategy fresh
     results_test = []
     for name, strat_func in strategies:
         if name == "Rolling MV":
@@ -121,13 +139,15 @@ def main():
             strat_func = make_ledoit_wolf_strategy(turnover_gamma=turnover_gamma)
         elif name == "Static MV":
             strat_func = make_static_mv_strategy(train)
-        elif name == "Kalman MV":
+        elif name in KALMAN_VARIANTS:
             strat_func = make_kalman_strategy(
                 train,
-                q_scale=q_best,
+                q_scale=calibration[name]["q_best"],
                 regime_labels=regime_labels,
-                regime_alphas=regime_alphas,
+                regime_alphas=calibration[name]["regime_alphas"],
                 turnover_gamma=turnover_gamma,
+                use_filtered_mu=calibration[name]["use_filtered_mu"],
+                use_filtered_sigma=calibration[name]["use_filtered_sigma"],
             )
             # Warm up filter on training data before test period
             for i in range(len(train)):
@@ -163,8 +183,9 @@ def main():
     plot_cumulative_returns(results_full, "Cumulative Returns — Full Period")
     plot_drawdowns(results_full, "Drawdowns — Full Period")
 
+    weight_plot_names = ["Rolling MV"] + list(KALMAN_VARIANTS.keys())
     for r in results_full:
-        if r["name"] in ["Kalman MV", "Rolling MV"]:
+        if r["name"] in weight_plot_names:
             plot_weights_over_time(r)
 
     plot_filtered_vs_rolling_mu(filtered_mu, returns, asset="SPY")
@@ -209,19 +230,23 @@ def main():
     print(sharpe_by_regime.to_string())
     sharpe_by_regime.to_csv(f"{RESULTS_DIR}/regime_sharpe_table.csv")
 
-    advantage = kalman_outperformance_by_regime(
-        results_full, regime_labels, baseline="Rolling MV"
-    )
-    print("\n  Kalman MV Advantage by Regime:")
-    print(advantage.to_string())
-    advantage.to_csv(f"{RESULTS_DIR}/kalman_advantage_by_regime.csv")
+    advantage_tables = {}
+    for name in KALMAN_VARIANTS:
+        adv = kalman_outperformance_by_regime(
+            results_full, regime_labels, baseline="Rolling MV", strategy=name
+        )
+        advantage_tables[name] = adv
+        print(f"\n  {name} Advantage by Regime:")
+        print(adv.to_string())
+        adv.to_csv(f"{RESULTS_DIR}/{name.replace(' ', '_').replace('-', '_')}_advantage_by_regime.csv")
 
     # Step 8: Extended Plots
     print("\n=== STEP 8: Extended Plots ===")
 
     plot_sharpe_confidence_intervals(stat_results["sharpe_cis"])
     plot_regime_performance(sharpe_by_regime)
-    plot_kalman_advantage_by_regime(advantage)
+    for name, adv in advantage_tables.items():
+        plot_kalman_advantage_by_regime(adv)
 
     vol_series = compute_realized_volatility(returns, window=21)
     plot_realized_volatility_with_regimes(vol_series, regime_labels)
@@ -233,7 +258,9 @@ def main():
             asset=asset,
         )
 
-    # Diagnostic plots for Discussion section
+    # Diagnostic plots for Discussion section — using Kalman-Sigma's
+    # calibration, since these specifically illustrate covariance-estimate
+    # divergence/gain (q_best/regime_alphas aliased above)
     from diagnostic_analysis import collect_kalman_gain, collect_covariance_divergence
     from plots_diagnostic import plot_kalman_gain, plot_covariance_divergence
 
@@ -259,14 +286,14 @@ def main():
 
     print("  Diagnostic plots saved.")
 
-    # Step 9: Transaction Cost Sensitivity
+    # Step 9: Transaction Cost Sensitivity — now covers all 3 variants
     print("\n=== STEP 9: Transaction Cost Sensitivity ===")
 
     from cost_analysis import run_sensitivity, plot_sensitivity, print_sharpe_pivot
 
     df_costs_full = run_sensitivity(
         returns, train, period_label="Full",
-        regime_labels=regime_labels, regime_alphas=regime_alphas,
+        regime_labels=regime_labels, calibration=calibration,
         turnover_gamma=turnover_gamma,
     )
     print_sharpe_pivot(df_costs_full, "Full")
@@ -275,7 +302,7 @@ def main():
 
     df_costs_oos = run_sensitivity(
         test, train, period_label="OOS",
-        regime_labels=regime_labels, regime_alphas=regime_alphas,
+        regime_labels=regime_labels, calibration=calibration,
         turnover_gamma=turnover_gamma,
     )
     print_sharpe_pivot(df_costs_oos, "OOS")

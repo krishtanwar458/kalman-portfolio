@@ -38,20 +38,6 @@ def compute_realized_volatility(
 ) -> pd.Series:
     """
     Compute rolling realized volatility as the average across assets.
-
-    We use the cross-sectional average of per-asset realized vol,
-    which gives a single market-wide vol measure.
-
-    Parameters
-    ----------
-    returns      : daily returns DataFrame (T x N)
-    window       : rolling window in trading days (default: 21 = 1 month)
-    annualize    : if True, annualize the vol
-    trading_days : annualization factor
-
-    Returns
-    -------
-    Series of realized vol (T,), indexed by date
     """
     per_asset_vol = returns.rolling(window=window).std()
     market_vol = per_asset_vol.mean(axis=1)  # average across assets
@@ -70,26 +56,6 @@ def classify_regimes(
 ) -> pd.Series:
     """
     Classify each date into a volatility regime.
-
-    Regime labels:
-        "LOW_VOL"    — bottom tercile of realized vol
-        "MED_VOL"    — middle tercile
-        "HIGH_VOL"   — top tercile
-        "CRISIS"     — vol > crisis_threshold std devs above mean
-                       (overrides tercile classification)
-
-    Parameters
-    ----------
-    returns          : daily returns DataFrame (T x N)
-    window           : rolling vol window in trading days
-    crisis_threshold : z-score threshold for crisis regime
-    reference_returns: if provided, percentile thresholds and crisis stats
-                       are computed on this series only (e.g. training data).
-                       This avoids look-ahead bias from the test period.
-
-    Returns
-    -------
-    Series of regime labels indexed by date
     """
     vol = compute_realized_volatility(returns, window=window)
 
@@ -119,14 +85,6 @@ def classify_regimes(
 def regime_summary(regimes: pd.Series) -> pd.DataFrame:
     """
     Print a summary of how many days fall into each regime.
-
-    Parameters
-    ----------
-    regimes : Series of regime labels from classify_regimes()
-
-    Returns
-    -------
-    DataFrame with regime name, day count, and percentage
     """
     counts = regimes.value_counts()
     pct    = (counts / len(regimes) * 100).round(1)
@@ -145,17 +103,6 @@ def regime_conditional_performance(
 ) -> pd.DataFrame:
     """
     Compute performance metrics for each strategy within each regime.
-
-    Parameters
-    ----------
-    results      : list of dicts from run_backtest()
-    regimes      : Series of regime labels from classify_regimes()
-    trading_days : annualization factor
-    min_days     : minimum days in regime to report metrics (avoids noise)
-
-    Returns
-    -------
-    MultiIndex DataFrame: (Regime, Metric) x Strategy
     """
     regime_labels = regimes.unique()
     order         = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
@@ -221,10 +168,6 @@ def regime_sharpe_table(
 ) -> pd.DataFrame:
     """
     Simplified version: just Sharpe ratio per regime per strategy.
-
-    Returns
-    -------
-    DataFrame: rows = regimes, columns = strategies
     """
     regime_labels = regimes.unique()
     order         = ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
@@ -258,24 +201,32 @@ def kalman_outperformance_by_regime(
     trading_days: int = 252,
     min_days: int = 20,
     baseline: str = "Rolling MV",
+    strategy: str = "Kalman MV",
 ) -> pd.DataFrame:
     """
-    Compute Kalman MV Sharpe MINUS baseline Sharpe for each regime.
+    Compute `strategy` Sharpe MINUS `baseline` Sharpe for each regime.
+
+    Parameters
+    ----------
+    strategy : name of the strategy column to compare against baseline.
+               Generalized from a hardcoded "Kalman MV" so this can be
+               called once per Kalman variant (Kalman-Mu MV, Kalman-Sigma MV,
+               Kalman-Full MV, etc.) without code changes.
 
     Returns
     -------
-    DataFrame: regime, baseline Sharpe, Kalman Sharpe, difference
+    DataFrame: N Days, baseline Sharpe, strategy Sharpe, strategy Advantage
     """
     sharpe_table = regime_sharpe_table(results, regimes, trading_days, min_days)
 
-    if "Kalman MV" not in sharpe_table.columns or baseline not in sharpe_table.columns:
-        raise ValueError(f"Need 'Kalman MV' and '{baseline}' in results.")
+    if strategy not in sharpe_table.columns or baseline not in sharpe_table.columns:
+        raise ValueError(f"Need '{strategy}' and '{baseline}' in results.")
 
     out = pd.DataFrame({
-        "N Days":              sharpe_table["N Days"],
-        f"{baseline} Sharpe": sharpe_table[baseline],
-        "Kalman MV Sharpe":   sharpe_table["Kalman MV"],
-        "Kalman Advantage":   sharpe_table["Kalman MV"] - sharpe_table[baseline],
+        "N Days":                  sharpe_table["N Days"],
+        f"{baseline} Sharpe":      sharpe_table[baseline],
+        f"{strategy} Sharpe":      sharpe_table[strategy],
+        f"{strategy} Advantage":   sharpe_table[strategy] - sharpe_table[baseline],
     })
 
     return out.round(4)
