@@ -8,10 +8,11 @@ TEST_START  = "2025-01-01"
 TEST_END    = "2026-03-31"
 
 # Kalman Filter Parameters
-# Q_SCALE is a fallback only — at runtime, main.py estimates Q_SCALE
-# via EM (Shumway & Stoffer, 2000) on training data and overrides this value.
-# All strategy functions accept q_scale as an argument so EM value propagates.
-Q_SCALE = 1e-5   # fallback default, overridden by EM in main.py
+# Q_SCALE is a fallback only — at runtime, main.py selects Q_SCALE
+# via walk-forward cross-validation on training data (criterion: portfolio
+# Sharpe on held-out validation window) and passes the result directly
+# to each strategy function. This value is never used by main.py.
+Q_SCALE = 1e-5   # fallback default, overridden by walk-forward CV in main.py
 Q_REGIME_ALPHAS = {}  # populated at runtime by calibrate_regime_alphas
 TURNOVER_GAMMA = 0.0  # overridden at runtime via CV
 
@@ -19,7 +20,7 @@ TURNOVER_GAMMA = 0.0  # overridden at runtime via CV
 RISK_AVERSION   = 2.0    # lambda in mean-variance objective
 LONG_ONLY       = True   # w_i >= 0
 FULLY_INVESTED  = True   # sum(w_i) = 1
-MAX_WEIGHT      = 0.4   # maximum weight per asset
+MAX_WEIGHT      = 0.4    # maximum weight per asset
 
 # Backtest Settings
 REBALANCE_FREQ  = "ME"   # ME = month-end, W = weekly

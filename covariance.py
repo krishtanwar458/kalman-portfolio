@@ -1,8 +1,10 @@
 """
 covariance.py — Rolling covariance estimation for portfolio optimization.
 
-For v1, I use simple rolling sample covariance.
-Future versions could add shrinkage (Ledoit-Wolf) or filtered covariance.
+Simple rolling sample covariance used as the baseline estimator.
+Ledoit-Wolf shrinkage is implemented separately in benchmarks.py
+(make_ledoit_wolf_strategy). Filtered covariance is implemented via
+the Kalman-Sigma MV and Kalman-Full MV variants, also in benchmarks.py.
 
 Usage:
     from covariance import rolling_covariance
@@ -45,7 +47,7 @@ if __name__ == "__main__":
     from data_loader import load_prices, compute_returns
 
     prices = load_prices()
-    returns = compute_returns(prices)
+    returns = compute_returns(prices, method="simple")
 
     cov_dict = rolling_covariance(returns)
     last_date = list(cov_dict.keys())[-1]

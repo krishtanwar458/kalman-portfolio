@@ -3,6 +3,11 @@ plots_diagnostic.py — Diagnostic plots for Discussion section (Section 6.2).
 
 Plot 1: Average Kalman gain over time with regime shading
 Plot 2: Frobenius norm divergence between Kalman and Rolling covariance estimates
+
+These plots illustrate the Kalman-Sigma MV variant's behaviour (the
+covariance-isolation design), which is what main.py's Step 8b passes in.
+Colors are imported from plots_extended.py — the single source of truth
+for strategy colors across all figures in the paper.
 """
 
 import numpy as np
@@ -11,6 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import os
 from config import PLOTS_DIR
+from plots_extended import COLORS
 
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
@@ -19,11 +25,6 @@ REGIME_COLORS = {
     "MED_VOL":  "#FFA726",
     "HIGH_VOL": "#EF5350",
     "CRISIS":   "#7B1FA2",
-}
-
-COLORS = {
-    "Kalman MV":  "#2196F3",
-    "Rolling MV": "#FF5722",
 }
 
 
@@ -60,19 +61,18 @@ def plot_kalman_gain(
     """
     Plot the average Kalman gain across assets over time with regime shading.
     Higher gain = filter is placing more weight on new observations.
+    Colored using Kalman-Sigma MV (the variant driving Step 8b diagnostics).
     """
     fig, ax = plt.subplots(figsize=(14, 5))
 
-    # Regime shading
     common_idx = gain_series.index.intersection(regimes.index)
     _add_regime_shading(ax, regimes.loc[common_idx])
 
-    # Smooth the gain series slightly for readability (21-day rolling mean)
     gain_smooth = gain_series.rolling(21, min_periods=1).mean()
     ax.plot(
         gain_series.index,
         gain_smooth.values,
-        color=COLORS["Kalman MV"],
+        color=COLORS["Kalman-Sigma MV"],
         linewidth=1.2,
         alpha=0.9,
         label="Kalman Gain (21-day smoothed)",
@@ -85,21 +85,13 @@ def plot_kalman_gain(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # Regime legend
     patches = [
-        mpatches.Patch(
-            color=REGIME_COLORS[r], alpha=0.4, label=r
-        )
+        mpatches.Patch(color=REGIME_COLORS[r], alpha=0.4, label=r)
         for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
         if r in regimes.values
     ]
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles=handles + patches,
-        fontsize=9,
-        loc="upper right",
-        ncol=2,
-    )
+    ax.legend(handles=handles + patches, fontsize=9, loc="upper right", ncol=2)
 
     plt.tight_layout(pad=1.5)
     if save:
@@ -119,10 +111,10 @@ def plot_covariance_divergence(
     Plot the Frobenius norm of (Kalman covariance - Rolling covariance)
     at each rebalancing date, with regime shading.
     Higher values = the two estimators disagree more.
+    Colored using Kalman-Sigma MV (the variant driving Step 8b diagnostics).
     """
     fig, ax = plt.subplots(figsize=(14, 5))
 
-    # Align regime shading to divergence dates
     common_idx = divergence_series.index.intersection(regimes.index)
     if len(common_idx) > 0:
         _add_regime_shading(ax, regimes.loc[common_idx])
@@ -130,7 +122,7 @@ def plot_covariance_divergence(
     ax.bar(
         divergence_series.index,
         divergence_series.values,
-        color=COLORS["Kalman MV"],
+        color=COLORS["Kalman-Sigma MV"],
         alpha=0.7,
         width=20,
         label="Frobenius norm $\\|\\hat{\\Sigma}^{\\mathrm{Kalman}}_t - \\hat{\\Sigma}^{\\mathrm{Rolling}}_t\\|_F$",
@@ -143,21 +135,13 @@ def plot_covariance_divergence(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # Regime legend
     patches = [
-        mpatches.Patch(
-            color=REGIME_COLORS[r], alpha=0.4, label=r
-        )
+        mpatches.Patch(color=REGIME_COLORS[r], alpha=0.4, label=r)
         for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]
         if r in regimes.values
     ]
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles=handles + patches,
-        fontsize=9,
-        loc="upper right",
-        ncol=2,
-    )
+    ax.legend(handles=handles + patches, fontsize=9, loc="upper right", ncol=2)
 
     plt.tight_layout(pad=1.5)
     if save:

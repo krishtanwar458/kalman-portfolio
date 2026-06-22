@@ -101,13 +101,10 @@ def diebold_mariano_test(
     -------
     dict with keys: DM_statistic, p_value, conclusion, loss_differential_mean
     """
-    # Align on common dates
     common_idx = forecast_errors_kalman.index.intersection(forecast_errors_rolling.index)
     e_kf = forecast_errors_kalman.loc[common_idx].values
     e_roll = forecast_errors_rolling.loc[common_idx].values
 
-    # Compute loss differential: d_t = L(e_kalman_t) - L(e_rolling_t)
-    # Negative d_t means KF made smaller error at time t (KF is better)
     if loss == "squared":
         d = e_kf ** 2 - e_roll ** 2
     elif loss == "absolute":
@@ -116,22 +113,18 @@ def diebold_mariano_test(
         raise ValueError(f"Unknown loss: {loss}. Use 'squared' or 'absolute'.")
 
     T = len(d)
-    d_bar = d.mean()  # mean loss differential
+    d_bar = d.mean()
 
-    # HAC variance for the test statistic
     hac_var = _newey_west_variance(d)
     dm_stat = d_bar / np.sqrt(hac_var / T)
 
-    # p-value
     if alternative == "less":
-        # One-sided: KF has lower loss (d_bar < 0 is good)
         p_value = stats.norm.cdf(dm_stat)
     elif alternative == "two-sided":
         p_value = 2 * stats.norm.cdf(-abs(dm_stat))
     else:
         raise ValueError(f"Unknown alternative: {alternative}")
 
-    # Interpretation
     if alternative == "less":
         if p_value < 0.05:
             conclusion = "Reject H0 at 5%: Kalman Filter has significantly lower forecast error."
@@ -186,10 +179,8 @@ def compute_forecast_errors(
     mu_kf = filtered_mu.loc[common_idx, common_assets]
     ret = returns.loc[common_idx, common_assets]
 
-    # Kalman forecast error: actual_t - mu_kf_{t-1}
     errors_kf = ret - mu_kf.shift(1)
 
-    # Rolling forecast error: actual_t - rolling_mean_{t-1}
     rolling_mu = ret.rolling(window=window, min_periods=window // 2).mean().shift(1)
     errors_roll = ret - rolling_mu
 
@@ -237,19 +228,15 @@ def block_bootstrap_sharpe(
 
     observed_sharpe = sharpe_from_array(returns)
 
-    # Generate bootstrap samples
     bootstrap_sharpes = np.zeros(n_bootstrap)
     n_blocks = int(np.ceil(T / block_size))
 
     for b in range(n_bootstrap):
-        # Sample random starting points for blocks
         starts = rng.integers(0, T - block_size + 1, size=n_blocks)
-        # Build bootstrap sample by concatenating blocks
         blocks = [returns[s : s + block_size] for s in starts]
-        boot_sample = np.concatenate(blocks)[:T]  # trim to original length
+        boot_sample = np.concatenate(blocks)[:T]
         bootstrap_sharpes[b] = sharpe_from_array(boot_sample)
 
-    # Percentile bootstrap CI (BCa would be more accurate but this is standard)
     alpha = 1 - confidence
     ci_lower = np.percentile(bootstrap_sharpes, 100 * alpha / 2)
     ci_upper = np.percentile(bootstrap_sharpes, 100 * (1 - alpha / 2))
@@ -309,11 +296,10 @@ def bootstrap_sharpe_comparison(
 # NOTE: not used by main.py, which calls compute_forecast_errors /
 # diebold_mariano_test / bootstrap_sharpe_comparison directly, once per
 # Kalman variant, since each variant needs its own filtered_mu series (see
-# module docstring). This wrapper predates the 3-variant design and only
-# knows about a single "Kalman MV" -- kept for reference / potential reuse
-# in a single-variant context, but would need a variant-aware rewrite
-# (a loop over KALMAN_VARIANTS, like main.py's Step 6) before being usable
-# in the current pipeline.
+# module docstring). This wrapper predates the 3-variant design. It has
+# been updated to check all three current variant names instead of the
+# defunct "Kalman MV" label, but main.py's Step 6 loop is the canonical
+# path and should be preferred.
 
 def run_all_tests(
     results: list[dict],
@@ -341,7 +327,6 @@ def run_all_tests(
     """
     print("\n=== STATISTICAL TESTS ===")
 
-    # Diebold-Mariano test (per asset, then averaged)
     print("\n[1] Diebold-Mariano Forecast Accuracy Test")
     print("    H0: this variant's filter and Rolling have equal forecast accuracy")
     print("    H1: this variant's filter has lower forecast error (one-sided)")
@@ -359,7 +344,6 @@ def run_all_tests(
         dm_results[asset] = dm
         print(f"    {asset}: DM={dm['DM_statistic']:+.3f}, p={dm['p_value']:.3f} : {dm['conclusion'][:50]}")
 
-    # Overall DM test on portfolio-aggregated errors (mean across assets)
     e_kf_agg = errors_kf.mean(axis=1)
     e_roll_agg = errors_roll.mean(axis=1)
     dm_overall = diebold_mariano_test(e_kf_agg, e_roll_agg, loss="squared", alternative="less")
@@ -367,30 +351,27 @@ def run_all_tests(
     print(f"\n    OVERALL: DM={dm_overall['DM_statistic']:+.3f}, p={dm_overall['p_value']:.3f}")
     print(f"    {dm_overall['conclusion']}")
 
-    # Block Bootstrap Sharpe CIs
     print(f"\n[2] Block Bootstrap Sharpe Ratio Confidence Intervals")
     print(f"    (block_size=20 days, n_bootstrap={n_bootstrap})")
     sharpe_cis = bootstrap_sharpe_comparison(results, n_bootstrap=n_bootstrap)
     print(f"\n{sharpe_cis.to_string()}")
 
-    # Assess overlap -- caller must pass the variant's actual strategy name
-    # (this wrapper has no way to know which of the 3 Kalman variants
-    # `filtered_mu` belongs to; it only checks the literal name "Kalman MV",
-    # which no longer exists as a strategy label and will simply skip this
-    # block in the current 3-variant pipeline)
-    kalman_row = sharpe_cis.loc["Kalman MV"] if "Kalman MV" in sharpe_cis.index else None
+    kalman_variants = ["Kalman-Mu MV", "Kalman-Sigma MV", "Kalman-Full MV"]
     rolling_row = sharpe_cis.loc["Rolling MV"] if "Rolling MV" in sharpe_cis.index else None
 
-    if kalman_row is not None and rolling_row is not None:
-        no_overlap = kalman_row["95% CI Lower"] > rolling_row["95% CI Upper"]
-        partial_overlap = kalman_row["95% CI Upper"] > rolling_row["95% CI Upper"]
-        print("\n    CI Interpretation:")
-        if no_overlap:
-            print("    CIs do NOT overlap: this variant's Sharpe is statistically superior to Rolling MV.")
-        elif partial_overlap:
-            print("    CIs partially overlap: this variant shows higher Sharpe but difference is not statistically conclusive.")
-        else:
-            print("    CIs fully overlap: No statistically significant difference in Sharpe ratios.")
+    if rolling_row is not None:
+        print("\n    CI Interpretation (vs Rolling MV):")
+        for variant in kalman_variants:
+            if variant not in sharpe_cis.index:
+                continue
+            row = sharpe_cis.loc[variant]
+            if row["95% CI Lower"] > rolling_row["95% CI Upper"]:
+                verdict = "CIs do NOT overlap — statistically superior to Rolling MV"
+            elif row["95% CI Upper"] > rolling_row["95% CI Upper"]:
+                verdict = "CIs partially overlap — higher point estimate, not conclusive"
+            else:
+                verdict = "CIs fully overlap — no significant difference"
+            print(f"    {variant}: {verdict}")
 
     return {
         "dm_results": dm_results,
