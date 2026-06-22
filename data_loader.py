@@ -1,5 +1,5 @@
 """
-data_loader.py — Download ETF prices and compute daily log returns.
+data_loader.py — Download ETF prices and compute daily returns.
 
 Usage:
     from data_loader import load_prices, compute_returns, split_data
@@ -37,18 +37,37 @@ def load_prices(
     return prices
 
 
-def compute_returns(prices: pd.DataFrame, method: str = "log") -> pd.DataFrame:
+def compute_returns(prices: pd.DataFrame, method: str = "simple") -> pd.DataFrame:
     """
     Compute daily returns from price data.
 
     Parameters
     ----------
     prices : DataFrame of adjusted close prices
-    method : "log" for log returns, "simple" for arithmetic returns
+    method : "simple" (default) for arithmetic returns, "log" for log returns.
 
     Returns
     -------
     DataFrame of daily returns (first row is NaN, dropped)
+
+    Notes
+    -----
+    Default is "simple", not "log", and this isn't interchangeable with the
+    rest of the pipeline. backtest.py aggregates a portfolio's daily return
+    as a weighted sum across assets (`weights @ r_t`) -- that's only exact
+    for simple returns (dollar values combine linearly, so simple returns
+    do too). For log returns, the true portfolio log return is
+    ln(1 + weights @ r_simple), which by Jensen's inequality (log is
+    concave) is always >= weights @ r_log -- a weighted sum of log returns
+    silently understates the true portfolio return, with the gap growing
+    with cross-sectional dispersion across assets (i.e. worst exactly when
+    assets are moving most differently from each other, such as during
+    CRISIS/HIGH_VOL regimes). Separately, every cumulative-growth
+    calculation downstream (`(1 + daily_returns).cumprod()` in
+    backtest.py/evaluation.py/cost_analysis.py) is also only the correct
+    compounding formula for simple returns. Both issues are resolved at
+    once by using simple returns as the base series feeding the pipeline --
+    nothing downstream needs to change to accommodate it.
     """
     if method == "log":
         import numpy as np

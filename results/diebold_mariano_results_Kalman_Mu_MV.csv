@@ -1,8 +1,8 @@
 ,DM_statistic,p_value,mean_loss_differential,n_observations,conclusion,loss_function,alternative
-EFA,-4.6388,0.0,-2.3e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-GLD,-5.4762,0.0,-1.47e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-QQQ,-5.2336,0.0,-2.71e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-SPY,-4.4782,0.0,-1.97e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-TLT,-4.2541,0.0,-1.02e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-VNQ,-3.9994,0.0,-2.57e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
-OVERALL,-4.6113,0.0,-1.02e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
+EFA,-3.5375,0.0002,-1.39e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
+GLD,-1.4837,0.0689,-3.2e-07,4054,Reject H0 at 10%: Kalman Filter has marginally lower forecast error.,squared,less
+QQQ,-3.9923,0.0,-1.52e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
+SPY,-3.9823,0.0,-1.19e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
+TLT,-1.0093,0.1564,-1.8e-07,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+VNQ,-3.274,0.0005,-1.3e-06,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less
+OVERALL,-4.4102,0.0,-6.9e-07,4054,Reject H0 at 5%: Kalman Filter has significantly lower forecast error.,squared,less

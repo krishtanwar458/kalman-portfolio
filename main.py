@@ -40,7 +40,7 @@ def main():
     # Step 1: Load Data
     print("\n=== STEP 1: Loading Data ===")
     prices = load_prices()
-    returns = compute_returns(prices)
+    returns = compute_returns(prices, method="simple")
     train, test = split_data(returns)
 
     # Step 2: Calibrate Q + Per-Regime Alphas — one set PER Kalman variant
