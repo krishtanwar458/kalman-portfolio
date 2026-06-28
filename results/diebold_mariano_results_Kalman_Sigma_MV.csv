@@ -3,6 +3,6 @@ EFA,5.6392,1.0,0.00014099,4054,Fail to reject H0: No significant difference in f
 GLD,12.219,1.0,0.00010112,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
 QQQ,5.5308,1.0,0.00018008,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
 SPY,4.3369,1.0,0.00012783,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
-TLT,12.0413,1.0,8.949e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
+TLT,12.0415,1.0,8.949e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
 VNQ,4.3621,1.0,0.0001709,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less
 OVERALL,5.1105,1.0,5.603e-05,4054,Fail to reject H0: No significant difference in forecast accuracy.,squared,less

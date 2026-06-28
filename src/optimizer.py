@@ -10,7 +10,7 @@ Solves:  max  w'mu - (lambda/2) * w'Sigma*w
 
 import numpy as np
 import cvxpy as cp
-from config import RISK_AVERSION, LONG_ONLY, FULLY_INVESTED, MAX_WEIGHT
+from config import RISK_AVERSION, LONG_ONLY, MAX_WEIGHT
 
 
 def optimize_portfolio(
