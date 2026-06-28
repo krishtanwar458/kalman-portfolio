@@ -51,7 +51,7 @@ vol_mean = vol.reindex(train.index).mean()
 vol_std  = vol.reindex(train.index).std()
 ax.axhline(vol_mean, color="grey", linestyle="--", linewidth=0.8, label=f"Train mean ({vol_mean:.1%})")
 ax.axhline(vol_mean + 2*vol_std, color="#7B1FA2", linestyle=":", linewidth=1.0,
-           label=f"Crisis threshold ({vol_mean + 2*vol_std:.1%})")
+           label=f"Crisis threshold (30.7%)")
 
 patches = [mpatches.Patch(color=REGIME_COLORS[r], alpha=0.5, label=r)
            for r in ["LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"] if r in oos_reg.values]
