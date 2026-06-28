@@ -53,6 +53,8 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
     drawdown = (cumulative - rolling_max) / rolling_max
     max_drawdown = drawdown.min()
 
+    calmar = ann_return / abs(max_drawdown) if max_drawdown != 0 else 0
+
     # Turnover — use backtest turnover_series for consistency with cost_analysis.py
     turnover_s = result.get("turnover_series", pd.Series(dtype=float))
     avg_turnover = turnover_s.mean() if len(turnover_s) > 0 else 0.0
@@ -65,6 +67,7 @@ def compute_metrics(result: dict, trading_days: int = 252) -> dict:
         "Max Drawdown": f"{max_drawdown:.2%}",
         "Avg Turnover": f"{avg_turnover:.4f}",
         "Total Return": f"{(total_growth - 1):.2%}",
+        "Calmar Ratio": f"{calmar:.3f}",
     }
 
 

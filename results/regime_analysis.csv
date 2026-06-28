@@ -1,5 +1,5 @@
 Regime,Equal Weight,Rolling MV,Static MV,Ledoit-Wolf MV,Kalman-Mu MV,Kalman-Sigma MV,Kalman-Full MV
-Pre-COVID,8.588,4.022,5.815,4.022,9.645,4.022,10.607
+Pre-COVID,8.588,4.022,5.815,4.022,9.645,4.022,10.609
 COVID Crash,0.16,0.536,0.153,0.536,0.808,0.536,1.236
 Recovery,1.845,1.825,1.967,1.822,1.914,1.823,2.159
 Rate Hikes,-0.051,-0.17,0.19,-0.183,0.057,-0.169,0.202

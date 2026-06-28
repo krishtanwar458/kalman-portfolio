@@ -6,11 +6,11 @@ Runs calibrate_regime_alphas() for all 6 permutations of
 [LOW_VOL, MED_VOL, HIGH_VOL] and compares the resulting alphas.
 CRISIS is always fixed at 1.0 and is never permuted.
 
-NOTE: This script targets Kalman-Sigma MV (use_filtered_mu=False,
-use_filtered_sigma=True) with a locked Q_BEST. To run for other
-variants, change VARIANT_NAME, USE_FILTERED_MU, USE_FILTERED_SIGMA,
-and Q_BEST accordingly. The output CSV includes the variant name so
-results from multiple runs are not conflated.
+Loops over all three Kalman variants (Kalman-Mu MV, Kalman-Sigma MV,
+Kalman-Full MV) and saves a single combined CSV with a Variant column.
+Each variant uses its own locked Q* and use_filtered_mu/use_filtered_sigma
+flags so the calibration runs against the correct mechanism. CRISIS is
+always fixed at 1.0 and is never permuted.
 """
 
 import itertools
@@ -22,13 +22,18 @@ from regime_detector import classify_regimes
 import q_calibration
 from q_calibration import calibrate_regime_alphas
 
-# Variant to test — change here to run for other variants
-VARIANT_NAME      = "Kalman-Sigma MV"
-USE_FILTERED_MU   = False
-USE_FILTERED_SIGMA = True
-Q_BEST            = 1.00e-7  # locked baseline Q for this variant
+# Three variants: (display name, use_filtered_mu, use_filtered_sigma, Q*)
+# Q* values match the locked baseline selected via walk-forward CV in main.py:
+#   Kalman-Mu MV   : Q* = 5.00e-8  (clear interior optimum)
+#   Kalman-Sigma MV: Q* = 1.00e-1  (boundary selection — weakly identified)
+#   Kalman-Full MV : Q* = 5.00e-8  (clear interior optimum)
+VARIANTS = [
+    ("Kalman-Mu MV",    True,  False, 5.00e-8),
+    ("Kalman-Sigma MV", False, True,  1.00e-1),
+    ("Kalman-Full MV",  True,  True,  5.00e-8),
+]
 
-print(f"Loading data (variant: {VARIANT_NAME})...")
+print("Loading data...")
 prices = load_prices()
 returns = compute_returns(prices, method="simple")
 train, test = split_data(returns)
@@ -41,42 +46,45 @@ regime_labels_train = regime_labels.reindex(train.index)
 regimes = ["LOW_VOL", "MED_VOL", "HIGH_VOL"]
 orderings = list(itertools.permutations(regimes))
 
-print(f"\nTesting {len(orderings)} orderings (this may take a few minutes)...\n")
+all_rows = []
 
-rows = []
-for i, order in enumerate(orderings, 1):
-    print(f"[{i}/{len(orderings)}] Order: {' -> '.join(order)}")
+for variant_name, use_mu, use_sigma, q_best in VARIANTS:
+    print(f"\n{'='*60}")
+    print(f"Variant: {variant_name}  (Q* = {q_best:.2e})")
+    print(f"{'='*60}")
+    print(f"Testing {len(orderings)} orderings (this may take a few minutes)...\n")
 
-    q_calibration.REGIMES_TO_TUNE = list(order)
+    for i, order in enumerate(orderings, 1):
+        print(f"  [{i}/{len(orderings)}] Order: {' -> '.join(order)}")
 
-    alphas, _ = calibrate_regime_alphas(
-        train, regime_labels_train, Q_BEST,
-        verbose=False,
-        use_filtered_mu=USE_FILTERED_MU,
-        use_filtered_sigma=USE_FILTERED_SIGMA,
-    )
+        q_calibration.REGIMES_TO_TUNE = list(order)
 
-    print(f"  Result: {alphas}\n")
+        alphas, _ = calibrate_regime_alphas(
+            train, regime_labels_train, q_best,
+            verbose=False,
+            use_filtered_mu=use_mu,
+            use_filtered_sigma=use_sigma,
+        )
 
-    row = {"Variant": VARIANT_NAME, "Order": " -> ".join(order)}
-    row.update(alphas)
-    rows.append(row)
+        print(f"    Result: {alphas}\n")
+
+        row = {"Variant": variant_name, "Order": " -> ".join(order)}
+        row.update(alphas)
+        all_rows.append(row)
 
 # Restore default order
 q_calibration.REGIMES_TO_TUNE = ["LOW_VOL", "MED_VOL", "HIGH_VOL"]
 
-df = pd.DataFrame(rows)
+df = pd.DataFrame(all_rows)
 df = df[["Variant", "Order", "LOW_VOL", "MED_VOL", "HIGH_VOL", "CRISIS"]]
 
-print("\n=== Summary: Calibrated Alphas by Search Order ===")
+print("\n=== Summary: Calibrated Alphas by Variant and Search Order ===")
 print(df.to_string(index=False))
 
 os.makedirs("results", exist_ok=True)
-safe_name = VARIANT_NAME.replace(" ", "_").replace("-", "_")
-out_path = f"results/alpha_order_robustness_{safe_name}.csv"
-df.to_csv(out_path, index=False)
-print(f"\nSaved: {out_path}")
+df.to_csv("results/alpha_order_robustness.csv", index=False)
+print("\nSaved: results/alpha_order_robustness.csv")
 
-print(f"\nLocked methodology order (LOW_VOL -> MED_VOL -> HIGH_VOL):")
-locked_row = df[df["Order"] == "LOW_VOL -> MED_VOL -> HIGH_VOL"]
-print(locked_row.to_string(index=False))
+print("\nLocked methodology order (LOW_VOL -> MED_VOL -> HIGH_VOL) per variant:")
+locked = df[df["Order"] == "LOW_VOL -> MED_VOL -> HIGH_VOL"]
+print(locked.to_string(index=False))
